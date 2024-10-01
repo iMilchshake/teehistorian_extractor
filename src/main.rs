@@ -1,6 +1,6 @@
 use core::str;
 use std::fs::File;
-use teehistorian::{Chunk, Th, ThBufReader};
+use teehistorian::{chunks::PlayerOld, Chunk, Th, ThBufReader};
 
 use twgame_core::net_msg::{self, NetVersion};
 
@@ -27,19 +27,25 @@ fn main() {
 
     let mut tick = 0;
 
-    for index in 0..5000 {
+    let mut last_cid = 0; // tick is implicit if a lower cid is recorded for PLAYER_X events
+
+    for index in 0..1000 {
         let chunk = th.next_chunk().unwrap();
 
         match chunk {
+            // TODO: a tick is implicit in these messages when a player with lower cid is recorded using any of PLAYER_DIFF, PLAYER_NEW, PLAYER_OLD
             Chunk::TickSkip(skip) => {
                 tick += 1 + skip.dt;
-                println!("\n### TICK {}", tick);
+                println!("> skipped {} ticks", 1 + skip.dt);
             }
-            Chunk::InputNew(ref inp_new) => {
+            Chunk::InputNew(inp_new) => {
                 println!("[{}] cid={} -> new {:?}", index, inp_new.cid, inp_new.input);
             }
-            Chunk::InputDiff(ref inp_diff) => {
-                println!("[{}] cid={} -> {:?}", index, inp_diff.cid, inp_diff.dinput);
+            Chunk::InputDiff(inp_diff) => {
+                println!(
+                    "[{}, {}] cid={} -> pdiff={:?}",
+                    index, tick, inp_diff.cid, inp_diff.dinput
+                );
             }
             Chunk::Join(join) => {
                 println!("[{}] JOIN cid={}", index, join.cid);
@@ -63,10 +69,20 @@ fn main() {
                 }
             }
             Chunk::PlayerDiff(player_diff) => {
-                println!("[{}] pdiff={:?}", index, player_diff);
+                println!("[{}, {} pdiff={:?}", index, tick, player_diff);
+                if player_diff.cid <= last_cid {
+                    tick += 1;
+                }
+                last_cid = player_diff.cid;
+            }
+            Chunk::PlayerNew(player_new) => {
+                println!("[{}] PLAYER NEW={:?}", index, player_new);
+            }
+            Chunk::PlayerOld(player_old) => {
+                println!("[{}] PLAYER OLD={:?}", index, player_old);
             }
             _ => {
-                println!("untracked variant: {:?}", chunk);
+                println!("[?????] untracked variant: {:?}", chunk);
             }
         }
     }
