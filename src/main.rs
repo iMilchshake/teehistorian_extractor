@@ -22,36 +22,37 @@ fn main() {
     let mut th = Th::parse(ThBufReader::new(f)).unwrap();
 
     let header_bytes = th.header().unwrap();
+    // TODO: parse json
     let header_str = str::from_utf8(header_bytes).unwrap();
 
-    for index in 0..1000 {
+    let mut tick = 0;
+
+    for index in 0..5000 {
         let chunk = th.next_chunk().unwrap();
 
         match chunk {
-            Chunk::InputNew(ref inp_new) => {
-                // dbg!(inp_new);
+            Chunk::TickSkip(skip) => {
+                tick += 1 + skip.dt;
+                println!("\n### TICK {}", tick);
             }
-            Chunk::InputDiff(ref inp_dif) => {
-                // dbg!(inp_dif);
+            Chunk::InputNew(ref inp_new) => {
+                println!("[{}] cid={} -> new {:?}", index, inp_new.cid, inp_new.input);
+            }
+            Chunk::InputDiff(ref inp_diff) => {
+                println!("[{}] cid={} -> {:?}", index, inp_diff.cid, inp_diff.dinput);
             }
             Chunk::Join(join) => {
-                println!("[{}] {:?}", index, join);
+                println!("[{}] JOIN cid={}", index, join.cid);
             }
-            Chunk::JoinVer6(join) => {
-                println!("[{}] {:?}", index, join);
-            }
-            Chunk::JoinVer7(join) => {
-                println!("[{}] {:?}", index, join);
-            }
-            Chunk::NetMessage(ref msg) => {
-                let res = net_msg::parse_net_msg(&msg.msg, &mut NetVersion::V06);
+            Chunk::NetMessage(ref net_msg) => {
+                let res = net_msg::parse_net_msg(&net_msg.msg, &mut NetVersion::V06);
 
                 if let Ok(res) = res {
                     match res {
                         net_msg::ClNetMessage::ClStartInfo(info) => {
                             println!(
                                 "id={} -> name={}",
-                                msg.cid,
+                                net_msg.cid,
                                 String::from_utf8_lossy(info.name)
                             )
                         }
@@ -61,8 +62,12 @@ fn main() {
                     panic!("ayy");
                 }
             }
-
-            _ => continue,
+            Chunk::PlayerDiff(player_diff) => {
+                println!("[{}] pdiff={:?}", index, player_diff);
+            }
+            _ => {
+                println!("untracked variant: {:?}", chunk);
+            }
         }
     }
 }

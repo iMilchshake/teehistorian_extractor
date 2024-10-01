@@ -511,7 +511,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "teehistorian_test"
+name = "teehistorian_extractor"
 version = "0.1.0"
 dependencies = [
  "teehistorian 0.10.3",
