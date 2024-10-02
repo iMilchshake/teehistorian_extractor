@@ -3,7 +3,10 @@ use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json::from_str;
 use std::{collections::HashMap, fs::File};
-use teehistorian::{chunks::chunk, Chunk, Th, ThBufReader};
+use teehistorian::chunks::{
+    ConsoleCommand, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld, TickSkip,
+};
+use teehistorian::{Chunk, Th, ThBufReader};
 use twgame_core::net_msg;
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +73,80 @@ impl Parser {
         }
     }
 
+    fn handle_tick_skip(&mut self, skip: TickSkip) {
+        self.tick += 1 + skip.dt;
+        debug!("> skipped {} ticks", 1 + skip.dt);
+    }
+
+    fn handle_input_new(&mut self, inp_new: InputNew) {
+        debug!(
+            "[{}] cid={} -> new {:?}",
+            self.chunk_index, inp_new.cid, inp_new.input
+        );
+    }
+
+    fn handle_input_diff(&mut self, inp_diff: InputDiff) {
+        debug!(
+            "[{}, {}] cid={} -> pdiff={:?}",
+            self.chunk_index, self.tick, inp_diff.cid, inp_diff.dinput
+        );
+    }
+
+    fn handle_net_message(&mut self, net_msg: NetMessage) {
+        let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06);
+        if let Ok(res) = res {
+            match res {
+                net_msg::ClNetMessage::ClStartInfo(info) => {
+                    info!(
+                        "chunk={}, tick={}, cid={} -> name={}",
+                        self.chunk_index,
+                        self.tick,
+                        net_msg.cid,
+                        String::from_utf8_lossy(info.name)
+                    );
+                }
+                net_msg::ClNetMessage::ClKill => {
+                    info!("tick={} cid={} KILL", self.tick, net_msg.cid);
+                }
+                _ => {}
+            }
+        } else {
+            panic!("ayy");
+        }
+    }
+
+    fn handle_player_diff(&mut self, player_diff: PlayerDiff) {
+        debug!(
+            "[{}, {} pdiff={:?}",
+            self.chunk_index, self.tick, player_diff
+        );
+        if player_diff.cid <= self.last_cid {
+            self.tick += 1;
+        }
+        self.last_cid = player_diff.cid;
+    }
+
+    fn handle_console_command(&mut self, command: ConsoleCommand) {
+        if command.cid == -1 {
+            return; // ignore server commands
+        }
+        let cmd = String::from_utf8_lossy(&command.cmd);
+        let args: Vec<String> = command
+            .args
+            .iter()
+            .map(|arg| String::from_utf8_lossy(arg).to_string())
+            .collect();
+        debug!("cid={}, cmd={} args={}", command.cid, cmd, args.join(" "));
+    }
+
+    fn handle_player_old(&mut self, player: PlayerOld) {
+        info!("LEAVE cid={}", player.cid);
+    }
+
+    fn handle_player_new(&mut self, player: PlayerNew) {
+        info!("JOIN cid={}", player.cid);
+    }
+
     fn parse_chunk(&mut self, chunk: Chunk) {
         assert!(
             !self.finished,
@@ -77,86 +154,15 @@ impl Parser {
         );
 
         match chunk {
-            Chunk::TickSkip(skip) => {
-                self.tick += 1 + skip.dt;
-                debug!("> skipped {} ticks", 1 + skip.dt);
-            }
-            Chunk::InputNew(inp_new) => {
-                debug!(
-                    "[{}] cid={} -> new {:?}",
-                    self.chunk_index, inp_new.cid, inp_new.input
-                );
-            }
-            Chunk::InputDiff(inp_diff) => {
-                debug!(
-                    "[{}, {}] cid={} -> pdiff={:?}",
-                    self.chunk_index, self.tick, inp_diff.cid, inp_diff.dinput
-                );
-            }
-            Chunk::NetMessage(ref net_msg) => {
-                let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06);
-
-                if let Ok(res) = res {
-                    match res {
-                        net_msg::ClNetMessage::ClStartInfo(info) => {
-                            info!(
-                                "chunk={}, tick={}, cid={} -> name={}",
-                                self.chunk_index,
-                                self.tick,
-                                net_msg.cid,
-                                String::from_utf8_lossy(info.name)
-                            )
-                        }
-                        net_msg::ClNetMessage::ClKill => {
-                            info!("tick={} cid={} KILL", self.tick, net_msg.cid)
-                        }
-                        _ => {}
-                    }
-                } else {
-                    panic!("ayy");
-                }
-            }
-            Chunk::PlayerDiff(player_diff) => {
-                debug!(
-                    "[{}, {} pdiff={:?}",
-                    self.chunk_index, self.tick, player_diff
-                );
-
-                // TODO: a tick is implicit in these messages when a player with lower cid is
-                // recorded using any of PLAYER_DIFF, PLAYER_NEW, PLAYER_OLD
-                if player_diff.cid <= self.last_cid {
-                    self.tick += 1;
-                }
-                self.last_cid = player_diff.cid;
-            }
-            Chunk::Eos => {
-                self.finished = true;
-            }
-            Chunk::ConsoleCommand(command) => {
-                if command.cid == -1 {
-                    return; // ignore server commands
-                }
-
-                let cmd = String::from_utf8_lossy(&command.cmd);
-                let args: Vec<String> = command
-                    .args
-                    .iter()
-                    .map(|arg| String::from_utf8_lossy(arg).to_string())
-                    .collect();
-                debug!("cid={}, cmd={} args={}", command.cid, cmd, args.join(" "));
-            }
-            Chunk::PlayerOld(player) => {
-                info!("LEAVE cid={}", player.cid);
-            }
-            Chunk::PlayerNew(player) => {
-                info!("JOIN cid={}", player.cid);
-            }
-            // Chunk::PlayerNew(player_new) => {
-            //     debug!("[{}] PLAYER NEW={:?}", self.chunk_index, player_new);
-            // }
-            // Chunk::PlayerOld(player_old) => {
-            //     debug!("[{}] PLAYER OLD={:?}", self.chunk_index, player_old);
-            // }
+            Chunk::TickSkip(skip) => self.handle_tick_skip(skip),
+            Chunk::InputNew(inp_new) => self.handle_input_new(inp_new),
+            Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
+            Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg),
+            Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff),
+            Chunk::Eos => self.finished = true,
+            Chunk::ConsoleCommand(command) => self.handle_console_command(command),
+            Chunk::PlayerOld(player) => self.handle_player_old(player),
+            Chunk::PlayerNew(player) => self.handle_player_new(player),
             // ignore these
             Chunk::JoinVer6(_)
             | Chunk::JoinVer7(_)
@@ -184,7 +190,7 @@ struct PlayerSequence {
 
 fn main() {
     colog::default_builder()
-        .filter_level(log::LevelFilter::Info)
+        .filter_level(log::LevelFilter::Debug)
         .init();
 
     let f = File::open("data/random/38a7c292-76c7-42c0-bb20-cde7dd6bf373.teehistorian").unwrap();
@@ -197,10 +203,8 @@ fn main() {
 
     let mut parser = Parser::new();
 
-    while !parser.finished {
+    while !parser.finished && parser.tick < 1000 {
         let chunk = th.next_chunk().unwrap();
         parser.parse_chunk(chunk);
     }
-
-    info!("done");
 }
