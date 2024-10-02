@@ -93,20 +93,22 @@ impl Parser {
                     self.chunk_index, self.tick, inp_diff.cid, inp_diff.dinput
                 );
             }
-            Chunk::Join(join) => {
-                debug!("[{}] JOIN cid={}", self.chunk_index, join.cid);
-            }
             Chunk::NetMessage(ref net_msg) => {
                 let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06);
 
                 if let Ok(res) = res {
                     match res {
                         net_msg::ClNetMessage::ClStartInfo(info) => {
-                            debug!(
-                                "id={} -> name={}",
+                            info!(
+                                "chunk={}, tick={}, cid={} -> name={}",
+                                self.chunk_index,
+                                self.tick,
                                 net_msg.cid,
                                 String::from_utf8_lossy(info.name)
                             )
+                        }
+                        net_msg::ClNetMessage::ClKill => {
+                            info!("tick={} cid={} KILL", self.tick, net_msg.cid)
                         }
                         _ => {}
                     }
@@ -130,16 +132,47 @@ impl Parser {
             Chunk::Eos => {
                 self.finished = true;
             }
+            Chunk::ConsoleCommand(command) => {
+                if command.cid == -1 {
+                    return; // ignore server commands
+                }
+
+                let cmd = String::from_utf8_lossy(&command.cmd);
+                let args: Vec<String> = command
+                    .args
+                    .iter()
+                    .map(|arg| String::from_utf8_lossy(arg).to_string())
+                    .collect();
+                debug!("cid={}, cmd={} args={}", command.cid, cmd, args.join(" "));
+            }
+            Chunk::PlayerOld(player) => {
+                info!("LEAVE cid={}", player.cid);
+            }
+            Chunk::PlayerNew(player) => {
+                info!("JOIN cid={}", player.cid);
+            }
             // Chunk::PlayerNew(player_new) => {
             //     debug!("[{}] PLAYER NEW={:?}", self.chunk_index, player_new);
             // }
             // Chunk::PlayerOld(player_old) => {
             //     debug!("[{}] PLAYER OLD={:?}", self.chunk_index, player_old);
             // }
+            // ignore these
+            Chunk::JoinVer6(_)
+            | Chunk::JoinVer7(_)
+            | Chunk::Drop(_)
+            | Chunk::Join(_)
+            | Chunk::DdnetVersion(_)
+            | Chunk::PlayerReady(_) => {}
             _ => {
-                warn!("Untracked Chunk Variant: {:?}", chunk);
+                warn!(
+                    "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
+                    self.chunk_index, self.tick, chunk
+                );
             }
         }
+
+        self.chunk_index += 1;
     }
 }
 
