@@ -1,8 +1,25 @@
 use core::str;
 use log::{debug, info, warn};
+use serde::Deserialize;
+use serde_json::from_str;
 use std::{collections::HashMap, fs::File};
-use teehistorian::{Chunk, Th, ThBufReader};
+use teehistorian::{chunks::chunk, Chunk, Th, ThBufReader};
 use twgame_core::net_msg;
+
+#[derive(Debug, Deserialize)]
+struct GameInfo {
+    server_name: String,
+    map_name: String,
+}
+
+impl GameInfo {
+    fn from_header_bytes(header_bytes: &[u8]) -> Self {
+        let header_str =
+            str::from_utf8(header_bytes).expect("failed to convert header_bytes to utf-8");
+        let game_info = from_str(header_str).expect("failed to extract GameInfo from header_str");
+        game_info
+    }
+}
 
 // https://gitlab.com/ddnet-rs/twgame/-/blob/594f3f4869d34d0382ecceeaeb52cf81853ade7c/twgame-core/src/lib.rs#L93
 //     direction: input[0],
@@ -142,8 +159,8 @@ fn main() {
     let mut th = Th::parse(ThBufReader::new(f)).unwrap();
 
     // TODO: parse json
-    let header_bytes = th.header().unwrap();
-    let header_str = str::from_utf8(header_bytes).unwrap();
+    let game_info = GameInfo::from_header_bytes(th.header().unwrap());
+    info!("{:?}", game_info);
 
     let mut parser = Parser::new();
 
