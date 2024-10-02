@@ -1,4 +1,5 @@
 use core::str;
+use log::{debug, info, warn};
 use std::{collections::HashMap, fs::File};
 use teehistorian::{Chunk, Th, ThBufReader};
 use twgame_core::net_msg;
@@ -17,6 +18,9 @@ use twgame_core::net_msg;
 
 /// tracks state while parsing teehistorian file
 struct Parser {
+    /// tracks if end of stream (EOS) chunk has already been parsed
+    finished: bool,
+
     /// tracks tick
     tick: i32,
 
@@ -39,6 +43,7 @@ struct Parser {
 impl Parser {
     fn new() -> Parser {
         Parser {
+            finished: false,
             tick: 0,
             chunk_index: 0,
             last_cid: 0, // TODO: Option here?
@@ -49,26 +54,30 @@ impl Parser {
     }
 
     fn parse_chunk(&mut self, chunk: Chunk) {
+        assert!(
+            !self.finished,
+            "parser already finished, EOS chunk was reached"
+        );
+
         match chunk {
-            // TODO: a tick is implicit in these messages when a player with lower cid is recorded using any of PLAYER_DIFF, PLAYER_NEW, PLAYER_OLD
             Chunk::TickSkip(skip) => {
                 self.tick += 1 + skip.dt;
-                println!("> skipped {} ticks", 1 + skip.dt);
+                debug!("> skipped {} ticks", 1 + skip.dt);
             }
             Chunk::InputNew(inp_new) => {
-                println!(
+                debug!(
                     "[{}] cid={} -> new {:?}",
                     self.chunk_index, inp_new.cid, inp_new.input
                 );
             }
             Chunk::InputDiff(inp_diff) => {
-                println!(
+                debug!(
                     "[{}, {}] cid={} -> pdiff={:?}",
                     self.chunk_index, self.tick, inp_diff.cid, inp_diff.dinput
                 );
             }
             Chunk::Join(join) => {
-                println!("[{}] JOIN cid={}", self.chunk_index, join.cid);
+                debug!("[{}] JOIN cid={}", self.chunk_index, join.cid);
             }
             Chunk::NetMessage(ref net_msg) => {
                 let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06);
@@ -76,7 +85,7 @@ impl Parser {
                 if let Ok(res) = res {
                     match res {
                         net_msg::ClNetMessage::ClStartInfo(info) => {
-                            println!(
+                            debug!(
                                 "id={} -> name={}",
                                 net_msg.cid,
                                 String::from_utf8_lossy(info.name)
@@ -89,23 +98,29 @@ impl Parser {
                 }
             }
             Chunk::PlayerDiff(player_diff) => {
-                println!(
+                debug!(
                     "[{}, {} pdiff={:?}",
                     self.chunk_index, self.tick, player_diff
                 );
+
+                // TODO: a tick is implicit in these messages when a player with lower cid is
+                // recorded using any of PLAYER_DIFF, PLAYER_NEW, PLAYER_OLD
                 if player_diff.cid <= self.last_cid {
                     self.tick += 1;
                 }
                 self.last_cid = player_diff.cid;
             }
-            Chunk::PlayerNew(player_new) => {
-                println!("[{}] PLAYER NEW={:?}", self.chunk_index, player_new);
+            Chunk::Eos => {
+                self.finished = true;
             }
-            Chunk::PlayerOld(player_old) => {
-                println!("[{}] PLAYER OLD={:?}", self.chunk_index, player_old);
-            }
+            // Chunk::PlayerNew(player_new) => {
+            //     debug!("[{}] PLAYER NEW={:?}", self.chunk_index, player_new);
+            // }
+            // Chunk::PlayerOld(player_old) => {
+            //     debug!("[{}] PLAYER OLD={:?}", self.chunk_index, player_old);
+            // }
             _ => {
-                println!("[?????] untracked variant: {:?}", chunk);
+                warn!("Untracked Chunk Variant: {:?}", chunk);
             }
         }
     }
@@ -118,6 +133,10 @@ struct PlayerSequence {
 }
 
 fn main() {
+    colog::default_builder()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
     let f = File::open("data/random/38a7c292-76c7-42c0-bb20-cde7dd6bf373.teehistorian").unwrap();
     // TODO: use ThCompat?
     let mut th = Th::parse(ThBufReader::new(f)).unwrap();
@@ -128,8 +147,10 @@ fn main() {
 
     let mut parser = Parser::new();
 
-    for index in 0..1000 {
+    while !parser.finished {
         let chunk = th.next_chunk().unwrap();
         parser.parse_chunk(chunk);
     }
+
+    info!("done");
 }
