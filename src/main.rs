@@ -1,4 +1,5 @@
 use core::str;
+use derivative::Derivative;
 use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json::from_str;
@@ -55,6 +56,12 @@ struct Parser {
 
     /// tracks all previous ticks
     previous_ticks: Vec<Tick>,
+
+    /// tracks all active sequences
+    active_sequences: HashMap<i32, PlayerSequence>,
+
+    /// tracks all completed sequences
+    completed_sequences: Vec<PlayerSequence>,
 }
 
 /// A tick defines the input vectors and player positions for a timestep.
@@ -116,14 +123,15 @@ impl Tick {
         position.1 += player_diff.dy;
     }
 
-    /// Remove player position from tick for PlayerOld event
+    /// Remove player position and input vector from tick
     fn remove_cid(&mut self, cid: i32) {
         self.player_positions
             .remove(&cid)
             .expect("no position for cid exists");
-        self.input_vectors
-            .remove(&cid)
-            .expect("no input vector for cid exists");
+
+        // for input vectors we dont expect/assert the removal, as its possible
+        // that no input vector has been set (e.g. join and insta leave)
+        self.input_vectors.remove(&cid);
     }
 }
 
@@ -133,9 +141,11 @@ impl Parser {
             finished: false,
             tick_index: 0,
             chunk_index: 0,
-            last_cid: 0, // TODO: Option here?
+            last_cid: -1, // can never be larger or equal to first cid
             current_tick: Tick::new(),
             previous_ticks: Vec::new(),
+            active_sequences: HashMap::new(),
+            completed_sequences: Vec::new(),
         }
     }
 
@@ -154,12 +164,12 @@ impl Parser {
     }
 
     fn handle_input_new(&mut self, input_new: InputNew) {
-        info!("{:?}", &input_new);
+        info!("T={} {:?}", self.tick_index, &input_new);
         self.current_tick.add_init_input(input_new);
     }
 
     fn handle_input_diff(&mut self, input_diff: InputDiff) {
-        debug!("{:?}", &input_diff);
+        debug!("T={} {:?}", self.tick_index, &input_diff);
         self.current_tick.apply_input_diff(input_diff);
     }
 
@@ -175,7 +185,7 @@ impl Parser {
                     );
                 }
                 net_msg::ClNetMessage::ClKill => {
-                    debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
+                    info!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
                 }
                 _ => {}
             }
@@ -185,21 +195,41 @@ impl Parser {
     }
 
     fn handle_player_new(&mut self, player_new: PlayerNew) {
-        info!("{:?}", &player_new);
+        info!("T={} {:?}", self.tick_index, &player_new);
         self.check_implicit_tick(player_new.cid);
+        self.active_sequences.insert(
+            player_new.cid,
+            PlayerSequence::new(player_new.cid, self.tick_index),
+        );
         self.current_tick.add_init_position(player_new);
     }
 
     fn handle_player_diff(&mut self, player_diff: PlayerDiff) {
-        debug!("{:?}", &player_diff);
+        debug!("T={} {:?}", self.tick_index, &player_diff);
         self.check_implicit_tick(player_diff.cid);
         self.current_tick.apply_position_diff(player_diff);
     }
 
+    fn complete_active_sequence(&mut self, cid: i32) {
+        let mut sequence = self
+            .active_sequences
+            .remove(&cid)
+            .expect("no active sequence for cid found");
+        sequence.end_tick = Some(self.tick_index);
+        sequence.ticks = Some(
+            self.previous_ticks[sequence.start_tick as usize..self.tick_index as usize].to_vec(),
+        );
+        if sequence.player_name.is_none() {
+            warn!("No player name for completed sequence!")
+        }
+        self.completed_sequences.push(sequence);
+    }
+
     fn handle_player_old(&mut self, player_old: PlayerOld) {
-        info!("{:?}", &player_old);
+        info!("T={} {:?}", self.tick_index, &player_old);
         self.check_implicit_tick(player_old.cid);
         self.current_tick.remove_cid(player_old.cid);
+        self.complete_active_sequence(player_old.cid);
     }
 
     // a tick is implicit [...] when a player with lower cid is
@@ -226,6 +256,14 @@ impl Parser {
         debug!("cid={}, cmd={} args={}", command.cid, cmd, args.join(" "));
     }
 
+    fn handle_eos(&mut self) {
+        self.finished = true;
+        let cids: Vec<i32> = self.active_sequences.keys().cloned().collect();
+        for cid in cids {
+            self.complete_active_sequence(cid);
+        }
+    }
+
     fn parse_chunk(&mut self, chunk: Chunk) {
         assert!(
             !self.finished,
@@ -238,7 +276,7 @@ impl Parser {
             Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
             Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg),
             Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff),
-            Chunk::Eos => self.finished = true,
+            Chunk::Eos => self.handle_eos(),
             Chunk::ConsoleCommand(command) => self.handle_console_command(command),
             Chunk::PlayerOld(player) => self.handle_player_old(player),
             Chunk::PlayerNew(player) => self.handle_player_new(player),
@@ -260,11 +298,27 @@ impl Parser {
         self.chunk_index += 1;
     }
 }
-
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct PlayerSequence {
-    player_name: Option<String>,
+    cid: i32,
     start_tick: i32,
-    inputs: Vec<[i32; 10]>,
+    end_tick: Option<i32>,
+    player_name: Option<String>,
+    #[derivative(Debug = "ignore")]
+    ticks: Option<Vec<Tick>>,
+}
+
+impl PlayerSequence {
+    fn new(cid: i32, start_tick: i32) -> PlayerSequence {
+        PlayerSequence {
+            cid,
+            start_tick,
+            end_tick: None,
+            player_name: None,
+            ticks: None,
+        }
+    }
 }
 
 fn main() {
@@ -272,8 +326,8 @@ fn main() {
         // .filter_level(log::LevelFilter::Debug)
         .init();
 
-    // let f = File::open("../data/random/38a7c292-76c7-42c0-bb20-cde7dd6bf373.teehistorian").unwrap();
-    let f = File::open("data/random/49fd5e11-880c-457d-bb87-d492f8334afc.teehistorian").unwrap();
+    let f = File::open("data/random/38a7c292-76c7-42c0-bb20-cde7dd6bf373.teehistorian").unwrap();
+    // let f = File::open("data/random/49fd5e11-880c-457d-bb87-d492f8334afc.teehistorian").unwrap();
     // TODO: use ThCompat?
     let mut th = Th::parse(ThBufReader::new(f)).unwrap();
     let game_info = GameInfo::from_header_bytes(th.header().unwrap());
@@ -284,4 +338,26 @@ fn main() {
         let chunk = th.next_chunk().unwrap();
         parser.parse_chunk(chunk);
     }
+
+    info!(
+        "parsed {} chunks including {} ticks",
+        parser.chunk_index, parser.tick_index
+    );
+
+    info!("extracted {} sequences", parser.completed_sequences.len());
+
+    for sequence in parser.completed_sequences.iter() {
+        info!("{:?}", &sequence);
+    }
+
+    let total_ticks = parser
+        .completed_sequences
+        .iter()
+        .map(|s| s.end_tick.unwrap() - s.start_tick)
+        .sum::<i32>();
+    info!(
+        "total ticks={} equal to {} minutes of gameplay",
+        total_ticks,
+        (total_ticks as f32 / (50. * 60.))
+    )
 }
