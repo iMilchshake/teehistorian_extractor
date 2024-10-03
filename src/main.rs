@@ -3,6 +3,7 @@ use derivative::Derivative;
 use log::{debug, info, warn};
 use serde::Deserialize;
 use serde_json::from_str;
+use std::fs;
 use std::{collections::HashMap, fs::File};
 use teehistorian::chunks::{
     ConsoleCommand, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld, TickSkip,
@@ -185,7 +186,7 @@ impl Parser {
                     );
                 }
                 net_msg::ClNetMessage::ClKill => {
-                    info!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
+                    debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
                 }
                 _ => {}
             }
@@ -219,9 +220,10 @@ impl Parser {
         sequence.ticks = Some(
             self.previous_ticks[sequence.start_tick as usize..self.tick_index as usize].to_vec(),
         );
-        if sequence.player_name.is_none() {
-            warn!("No player name for completed sequence!")
-        }
+        // FIXME: ayaya
+        // if sequence.player_name.is_none() {
+        //     warn!("No player name for completed sequence!")
+        // }
         self.completed_sequences.push(sequence);
     }
 
@@ -326,32 +328,41 @@ fn main() {
         // .filter_level(log::LevelFilter::Debug)
         .init();
 
-    let f = File::open("data/random/38a7c292-76c7-42c0-bb20-cde7dd6bf373.teehistorian").unwrap();
-    // let f = File::open("data/random/49fd5e11-880c-457d-bb87-d492f8334afc.teehistorian").unwrap();
-    // TODO: use ThCompat?
-    let mut th = Th::parse(ThBufReader::new(f)).unwrap();
-    let game_info = GameInfo::from_header_bytes(th.header().unwrap());
-    info!("{:?}", game_info);
+    let mut all_sequences: Vec<PlayerSequence> = Vec::new();
 
-    let mut parser = Parser::new();
-    while !parser.finished {
-        let chunk = th.next_chunk().unwrap();
-        parser.parse_chunk(chunk);
+    for (file_index, entry) in fs::read_dir("data/random").unwrap().enumerate() {
+        let path = entry.unwrap().path();
+        info!("{} parsing {}", file_index, path.to_string_lossy());
+        let f = File::open(&path).unwrap();
+        let mut th = Th::parse(ThBufReader::new(f)).unwrap();
+
+        let game_info = GameInfo::from_header_bytes(th.header().unwrap());
+        info!("{:?}", game_info);
+
+        let mut parser = Parser::new();
+        while !parser.finished {
+            if let Ok(chunk) = th.next_chunk() {
+                parser.parse_chunk(chunk);
+            } else {
+                break;
+            }
+        }
+
+        info!(
+            "parsed {} chunks including {} ticks",
+            parser.chunk_index, parser.tick_index
+        );
+
+        for sequence in parser.completed_sequences.iter() {
+            info!("{:?}", &sequence);
+        }
+
+        all_sequences.append(&mut parser.completed_sequences);
     }
 
-    info!(
-        "parsed {} chunks including {} ticks",
-        parser.chunk_index, parser.tick_index
-    );
+    info!("extracted {} sequences", all_sequences.len());
 
-    info!("extracted {} sequences", parser.completed_sequences.len());
-
-    for sequence in parser.completed_sequences.iter() {
-        info!("{:?}", &sequence);
-    }
-
-    let total_ticks = parser
-        .completed_sequences
+    let total_ticks = all_sequences
         .iter()
         .map(|s| s.end_tick.unwrap() - s.start_tick)
         .sum::<i32>();
