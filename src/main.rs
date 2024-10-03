@@ -42,7 +42,7 @@ struct Parser {
     finished: bool,
 
     /// tracks tick
-    tick: i32,
+    tick_index: i32,
 
     /// tracks chunk index
     chunk_index: u32,
@@ -50,46 +50,117 @@ struct Parser {
     /// tracks last seen cid in a player event
     last_cid: i32,
 
-    /// tracks input vectors for each cid (for implicit ticks)
+    /// tracks current tick
+    current_tick: Tick,
+
+    /// tracks all previous ticks
+    previous_ticks: Vec<Tick>,
+}
+
+/// A tick defines the input vectors and player positions for a timestep.
+/// With the exception of the first tick, the previous tick is copied during
+/// parsing and only the changes are applied. This means that after successful parsing,
+/// all implicit information is explicitly available for each tick.
+#[derive(Clone, Debug)]
+struct Tick {
+    /// tracks input vectors for each cid
     input_vectors: HashMap<i32, [i32; 10]>,
 
-    /// tracks current player sequences for each cid
-    active_sequences: HashMap<i32, PlayerSequence>,
+    /// tracks player position for each cid (x, y)
+    player_positions: HashMap<i32, (i32, i32)>,
+}
 
-    /// stores player sequences that have been finished
-    finished_sequences: Vec<PlayerSequence>,
+impl Tick {
+    /// initializes an empty tick struct
+    fn new() -> Tick {
+        Tick {
+            input_vectors: HashMap::new(),
+            player_positions: HashMap::new(),
+        }
+    }
+
+    /// Add inital player position based on PlayerNew chunk
+    fn add_init_position(&mut self, new_player: PlayerNew) {
+        assert!(!self.player_positions.contains_key(&new_player.cid));
+        self.player_positions
+            .insert(new_player.cid, (new_player.x, new_player.y));
+    }
+
+    /// Add initial player input based on PlayerNew chunk
+    fn add_init_input(&mut self, input_new: InputNew) {
+        assert!(!self.input_vectors.contains_key(&input_new.cid));
+        self.input_vectors.insert(input_new.cid, input_new.input);
+    }
+
+    /// Update tick's input vector for some cid given a InputDiff
+    fn apply_input_diff(&mut self, input_diff: InputDiff) {
+        let input = self
+            .input_vectors
+            .get_mut(&input_diff.cid)
+            .expect("no input vector for cid exists yet");
+
+        // apply input diff to current input
+        for i in 0..10 {
+            input[i] = input[i].wrapping_add(input_diff.dinput[i]); // TODO: why wrapping?
+        }
+    }
+
+    /// Update tick's position for some cid given a PlayerDiff
+    fn apply_position_diff(&mut self, player_diff: PlayerDiff) {
+        let position = self
+            .player_positions
+            .get_mut(&player_diff.cid)
+            .expect("no position for cid exists yet");
+
+        position.0 += player_diff.dx;
+        position.1 += player_diff.dy;
+    }
+
+    /// Remove player position from tick for PlayerOld event
+    fn remove_cid(&mut self, cid: i32) {
+        self.player_positions
+            .remove(&cid)
+            .expect("no position for cid exists");
+        self.input_vectors
+            .remove(&cid)
+            .expect("no input vector for cid exists");
+    }
 }
 
 impl Parser {
     fn new() -> Parser {
         Parser {
             finished: false,
-            tick: 0,
+            tick_index: 0,
             chunk_index: 0,
             last_cid: 0, // TODO: Option here?
-            input_vectors: HashMap::new(),
-            active_sequences: HashMap::new(),
-            finished_sequences: Vec::new(),
+            current_tick: Tick::new(),
+            previous_ticks: Vec::new(),
         }
     }
 
+    /// Skips dt+1 ticks. In the case of dt=0 this just "finalizes" the current tick
     fn handle_tick_skip(&mut self, skip: TickSkip) {
-        self.tick += 1 + skip.dt;
-        debug!("> skipped {} ticks", 1 + skip.dt);
+        self.tick_index += 1 + skip.dt;
+        for _ in 0..(skip.dt + 1) {
+            self.previous_ticks.push(self.current_tick.clone());
+        }
+
+        if skip.dt > 0 {
+            debug!("Skipped {} ticks", 1 + skip.dt);
+        }
+
+        debug!("tick={}\t{:?}", self.tick_index, &self.current_tick);
     }
 
-    fn handle_input_new(&mut self, inp_new: InputNew) {
-        debug!(
-            "[{}] cid={} -> new {:?}",
-            self.chunk_index, inp_new.cid, inp_new.input
-        );
+    fn handle_input_new(&mut self, input_new: InputNew) {
+        info!("{:?}", &input_new);
+        self.current_tick.add_init_input(input_new);
     }
 
-    fn handle_input_diff(&mut self, inp_diff: InputDiff) {
-        debug!(
-            "[{}, {}] cid={} -> pdiff={:?}",
-            self.chunk_index, self.tick, inp_diff.cid, inp_diff.dinput
-        );
+    fn handle_input_diff(&mut self, input_diff: InputDiff) {
+        debug!("{:?}", &input_diff);
+        self.current_tick.apply_input_diff(input_diff);
     }
 
     fn handle_net_message(&mut self, net_msg: NetMessage) {
@@ -98,15 +169,13 @@ impl Parser {
             match res {
                 net_msg::ClNetMessage::ClStartInfo(info) => {
                     info!(
-                        "chunk={}, tick={}, cid={} -> name={}",
-                        self.chunk_index,
-                        self.tick,
+                        "StartInfo cid={} => name={}",
                         net_msg.cid,
                         String::from_utf8_lossy(info.name)
                     );
                 }
                 net_msg::ClNetMessage::ClKill => {
-                    info!("tick={} cid={} KILL", self.tick, net_msg.cid);
+                    debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
                 }
                 _ => {}
             }
@@ -115,15 +184,33 @@ impl Parser {
         }
     }
 
+    fn handle_player_new(&mut self, player_new: PlayerNew) {
+        info!("{:?}", &player_new);
+        self.check_implicit_tick(player_new.cid);
+        self.current_tick.add_init_position(player_new);
+    }
+
     fn handle_player_diff(&mut self, player_diff: PlayerDiff) {
-        debug!(
-            "[{}, {} pdiff={:?}",
-            self.chunk_index, self.tick, player_diff
-        );
-        if player_diff.cid <= self.last_cid {
-            self.tick += 1;
+        debug!("{:?}", &player_diff);
+        self.check_implicit_tick(player_diff.cid);
+        self.current_tick.apply_position_diff(player_diff);
+    }
+
+    fn handle_player_old(&mut self, player_old: PlayerOld) {
+        info!("{:?}", &player_old);
+        self.check_implicit_tick(player_old.cid);
+        self.current_tick.remove_cid(player_old.cid);
+    }
+
+    // a tick is implicit [...] when a player with lower cid is
+    // recorded using any of PLAYER_DIFF, PLAYER_NEW, PLAYER_OLD
+    // source: https://ddnet.org/libtw2-doc/teehistorian/
+    // INFO: i believe the docs are wrong, and its lower or equal(!) cid
+    fn check_implicit_tick(&mut self, cid: i32) {
+        if cid <= self.last_cid {
+            self.handle_tick_skip(TickSkip { dt: 0 });
         }
-        self.last_cid = player_diff.cid;
+        self.last_cid = cid;
     }
 
     fn handle_console_command(&mut self, command: ConsoleCommand) {
@@ -137,14 +224,6 @@ impl Parser {
             .map(|arg| String::from_utf8_lossy(arg).to_string())
             .collect();
         debug!("cid={}, cmd={} args={}", command.cid, cmd, args.join(" "));
-    }
-
-    fn handle_player_old(&mut self, player: PlayerOld) {
-        info!("LEAVE cid={}", player.cid);
-    }
-
-    fn handle_player_new(&mut self, player: PlayerNew) {
-        info!("JOIN cid={}", player.cid);
     }
 
     fn parse_chunk(&mut self, chunk: Chunk) {
@@ -173,7 +252,7 @@ impl Parser {
             _ => {
                 warn!(
                     "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
-                    self.chunk_index, self.tick, chunk
+                    self.chunk_index, self.tick_index, chunk
                 );
             }
         }
@@ -190,20 +269,18 @@ struct PlayerSequence {
 
 fn main() {
     colog::default_builder()
-        .filter_level(log::LevelFilter::Debug)
+        // .filter_level(log::LevelFilter::Debug)
         .init();
 
-    let f = File::open("data/random/38a7c292-76c7-42c0-bb20-cde7dd6bf373.teehistorian").unwrap();
+    // let f = File::open("../data/random/38a7c292-76c7-42c0-bb20-cde7dd6bf373.teehistorian").unwrap();
+    let f = File::open("data/random/49fd5e11-880c-457d-bb87-d492f8334afc.teehistorian").unwrap();
     // TODO: use ThCompat?
     let mut th = Th::parse(ThBufReader::new(f)).unwrap();
-
-    // TODO: parse json
     let game_info = GameInfo::from_header_bytes(th.header().unwrap());
     info!("{:?}", game_info);
 
     let mut parser = Parser::new();
-
-    while !parser.finished && parser.tick < 1000 {
+    while !parser.finished {
         let chunk = th.next_chunk().unwrap();
         parser.parse_chunk(chunk);
     }
