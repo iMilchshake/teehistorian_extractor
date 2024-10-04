@@ -61,9 +61,6 @@ struct Tick {
 
     /// tracks player position for each cid (x, y)
     player_positions: HashMap<i32, (i32, i32)>,
-
-    /// tracks player information for each cid
-    players: HashMap<i32, Player>,
 }
 
 impl Tick {
@@ -72,7 +69,6 @@ impl Tick {
         Tick {
             input_vectors: HashMap::new(),
             player_positions: HashMap::new(),
-            players: HashMap::new(),
         }
     }
 
@@ -92,7 +88,6 @@ impl Tick {
                 self.input_vectors.get(&input_new.cid).unwrap(),
                 input_new.input
             );
-            // FIXME: remove input vector once a player actually leaves the server?
             panic!();
         }
         self.input_vectors.insert(input_new.cid, input_new.input);
@@ -135,10 +130,6 @@ impl Tick {
         self.player_positions
             .remove(&cid)
             .expect("no position for cid exists");
-
-        // for input vectors we dont expect/assert the removal, as its possible
-        // that no input vector has been set (e.g. join and insta leave)
-        // self.input_vectors.remove(&cid); FIXME: remove?
     }
 }
 
@@ -147,13 +138,13 @@ struct Parser {
     /// tracks if end of stream (EOS) chunk has already been parsed
     finished: bool,
 
-    /// tracks tick
+    /// tracks current tick index
     tick_index: i32,
 
     /// tracks chunk index
     chunk_index: u32,
 
-    /// tracks last seen cid in a player event
+    /// tracks last seen cid in a player event (for implicit ticks)
     last_cid: i32,
 
     /// tracks current tick
@@ -167,6 +158,9 @@ struct Parser {
 
     /// tracks all completed sequences
     completed_sequences: Vec<PlayerSequence>,
+
+    /// tracks player names
+    player_names: HashMap<i32, String>,
 }
 
 impl Parser {
@@ -180,6 +174,7 @@ impl Parser {
             previous_ticks: Vec::new(),
             active_sequences: HashMap::new(),
             completed_sequences: Vec::new(),
+            player_names: HashMap::new(),
         }
     }
 
@@ -212,11 +207,9 @@ impl Parser {
         if let Ok(res) = res {
             match res {
                 net_msg::ClNetMessage::ClStartInfo(info) => {
-                    let player_name = String::from_utf8_lossy(info.name);
+                    let player_name = String::from_utf8_lossy(info.name).to_string();
                     info!("StartInfo cid={} => name={}", net_msg.cid, player_name);
-                    self.current_tick
-                        .players
-                        .insert(net_msg.cid, Player::new(player_name.to_string()));
+                    self.player_names.insert(net_msg.cid, player_name);
                 }
                 net_msg::ClNetMessage::ClKill => {
                     debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
@@ -261,19 +254,7 @@ impl Parser {
         sequence.ticks = Some(
             self.previous_ticks[sequence.start_tick as usize..self.tick_index as usize].to_vec(),
         );
-
-        // The last two ticks of a sequence are Drop followed by PlayerOld, so we can access the
-        // last name used by the player by accessing the tick before the Drop tick.
-        // FIXME: can i just do a temporary "name registry" which only stores the most recent name
-        // for each cid, but isnt tracked for each tick?
-        sequence.player_name = Some(
-            sequence.ticks.as_ref().unwrap()[sequence.ticks.as_ref().unwrap().len() - 3]
-                .players
-                .get(&cid)
-                .unwrap()
-                .name
-                .clone(),
-        );
+        sequence.player_name = Some(self.player_names.get(&cid).unwrap().clone());
         self.completed_sequences.push(sequence);
     }
 
@@ -318,7 +299,6 @@ impl Parser {
 
     fn handle_drop(&mut self, drop: Drop) {
         info!("T={} {:?}", self.tick_index, &drop);
-        self.current_tick.players.remove(&drop.cid);
         self.current_tick.input_vectors.remove(&drop.cid);
         // we dont clear player position, as this is handled by OldPlayer event
     }
