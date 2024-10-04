@@ -1,6 +1,6 @@
 use core::str;
 use derivative::Derivative;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use serde::Deserialize;
 use serde_json::from_str;
 use std::fs;
@@ -9,7 +9,19 @@ use teehistorian::chunks::{
     ConsoleCommand, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld, TickSkip,
 };
 use teehistorian::{Chunk, Th, ThBufReader};
-use twgame_core::net_msg;
+use twgame_core::net_msg::{self, Team};
+
+// https://gitlab.com/ddnet-rs/twgame/-/blob/594f3f4869d34d0382ecceeaeb52cf81853ade7c/twgame-core/src/lib.rs#L93
+//     direction: input[0],
+//     target_x: input[1],
+//     target_y: input[2],
+//     jump: input[3],
+//     fire: input[4],
+//     hook: input[5],
+//     player_flags: input[6], // range 0 - 256
+//     wanted_weapon: input[7],
+//     next_weapon: input[8],
+//     prev_weapon: input[9],
 
 #[derive(Debug, Deserialize)]
 struct GameInfo {
@@ -26,17 +38,107 @@ impl GameInfo {
     }
 }
 
-// https://gitlab.com/ddnet-rs/twgame/-/blob/594f3f4869d34d0382ecceeaeb52cf81853ade7c/twgame-core/src/lib.rs#L93
-//     direction: input[0],
-//     target_x: input[1],
-//     target_y: input[2],
-//     jump: input[3],
-//     fire: input[4],
-//     hook: input[5],
-//     player_flags: input[6], // range 0 - 256
-//     wanted_weapon: input[7],
-//     next_weapon: input[8],
-//     prev_weapon: input[9],
+#[derive(Debug, Clone)]
+struct Player {
+    name: String,
+}
+
+impl Player {
+    fn new(name: String) -> Player {
+        Player { name }
+    }
+}
+
+/// A tick defines the input vectors and player positions for a timestep.
+/// With the exception of the first tick, the previous tick is copied during
+/// parsing and only the changes are applied. This means that after successful parsing,
+/// all implicit information is explicitly available for each tick.
+#[derive(Clone, Debug)]
+struct Tick {
+    /// tracks input vectors for each cid
+    input_vectors: HashMap<i32, [i32; 10]>,
+
+    /// tracks player position for each cid (x, y)
+    player_positions: HashMap<i32, (i32, i32)>,
+
+    /// tracks player information for each cid
+    players: HashMap<i32, Player>,
+}
+
+impl Tick {
+    /// initializes an empty tick struct
+    fn new() -> Tick {
+        Tick {
+            input_vectors: HashMap::new(),
+            player_positions: HashMap::new(),
+            players: HashMap::new(),
+        }
+    }
+
+    /// Add inital player position based on PlayerNew chunk
+    fn add_init_position(&mut self, new_player: PlayerNew) {
+        assert!(!self.player_positions.contains_key(&new_player.cid));
+        self.player_positions
+            .insert(new_player.cid, (new_player.x, new_player.y));
+    }
+
+    /// Add initial player input based on PlayerNew chunk
+    fn add_init_input(&mut self, input_new: InputNew) {
+        if self.input_vectors.contains_key(&input_new.cid) {
+            warn!(
+                "OVERWRITE: for cid={} an input vector exists={:?}, new input vector={:?}",
+                &input_new.cid,
+                self.input_vectors.get(&input_new.cid).unwrap(),
+                input_new.input
+            );
+            // FIXME: remove input vector once a player actually leaves the server?
+        }
+        self.input_vectors.insert(input_new.cid, input_new.input);
+    }
+
+    /// Update tick's input vector for some cid given a InputDiff
+    fn apply_input_diff(&mut self, input_diff: InputDiff) {
+        if !self.input_vectors.contains_key(&input_diff.cid) {
+            error!(
+                "expected input vector for cid={} -> {:?}",
+                &input_diff.cid, &input_diff.dinput
+            );
+            return;
+        }
+
+        let input = self
+            .input_vectors
+            .get_mut(&input_diff.cid)
+            .expect("no input vector for cid exists yet");
+
+        // apply input diff to current input
+        for i in 0..10 {
+            input[i] = input[i].wrapping_add(input_diff.dinput[i]); // TODO: why wrapping?
+        }
+    }
+
+    /// Update tick's position for some cid given a PlayerDiff
+    fn apply_position_diff(&mut self, player_diff: PlayerDiff) {
+        let position = self
+            .player_positions
+            .get_mut(&player_diff.cid)
+            .expect("no position for cid exists yet");
+
+        position.0 += player_diff.dx;
+        position.1 += player_diff.dy;
+    }
+
+    /// remove player position for PlayerOld events
+    fn remove_player_position(&mut self, cid: i32) {
+        self.player_positions
+            .remove(&cid)
+            .expect("no position for cid exists");
+
+        // for input vectors we dont expect/assert the removal, as its possible
+        // that no input vector has been set (e.g. join and insta leave)
+        // self.input_vectors.remove(&cid); FIXME: remove?
+    }
+}
 
 /// tracks state while parsing teehistorian file
 struct Parser {
@@ -63,77 +165,6 @@ struct Parser {
 
     /// tracks all completed sequences
     completed_sequences: Vec<PlayerSequence>,
-}
-
-/// A tick defines the input vectors and player positions for a timestep.
-/// With the exception of the first tick, the previous tick is copied during
-/// parsing and only the changes are applied. This means that after successful parsing,
-/// all implicit information is explicitly available for each tick.
-#[derive(Clone, Debug)]
-struct Tick {
-    /// tracks input vectors for each cid
-    input_vectors: HashMap<i32, [i32; 10]>,
-
-    /// tracks player position for each cid (x, y)
-    player_positions: HashMap<i32, (i32, i32)>,
-}
-
-impl Tick {
-    /// initializes an empty tick struct
-    fn new() -> Tick {
-        Tick {
-            input_vectors: HashMap::new(),
-            player_positions: HashMap::new(),
-        }
-    }
-
-    /// Add inital player position based on PlayerNew chunk
-    fn add_init_position(&mut self, new_player: PlayerNew) {
-        assert!(!self.player_positions.contains_key(&new_player.cid));
-        self.player_positions
-            .insert(new_player.cid, (new_player.x, new_player.y));
-    }
-
-    /// Add initial player input based on PlayerNew chunk
-    fn add_init_input(&mut self, input_new: InputNew) {
-        assert!(!self.input_vectors.contains_key(&input_new.cid));
-        self.input_vectors.insert(input_new.cid, input_new.input);
-    }
-
-    /// Update tick's input vector for some cid given a InputDiff
-    fn apply_input_diff(&mut self, input_diff: InputDiff) {
-        let input = self
-            .input_vectors
-            .get_mut(&input_diff.cid)
-            .expect("no input vector for cid exists yet");
-
-        // apply input diff to current input
-        for i in 0..10 {
-            input[i] = input[i].wrapping_add(input_diff.dinput[i]); // TODO: why wrapping?
-        }
-    }
-
-    /// Update tick's position for some cid given a PlayerDiff
-    fn apply_position_diff(&mut self, player_diff: PlayerDiff) {
-        let position = self
-            .player_positions
-            .get_mut(&player_diff.cid)
-            .expect("no position for cid exists yet");
-
-        position.0 += player_diff.dx;
-        position.1 += player_diff.dy;
-    }
-
-    /// Remove player position and input vector from tick
-    fn remove_cid(&mut self, cid: i32) {
-        self.player_positions
-            .remove(&cid)
-            .expect("no position for cid exists");
-
-        // for input vectors we dont expect/assert the removal, as its possible
-        // that no input vector has been set (e.g. join and insta leave)
-        self.input_vectors.remove(&cid);
-    }
 }
 
 impl Parser {
@@ -179,15 +210,23 @@ impl Parser {
         if let Ok(res) = res {
             match res {
                 net_msg::ClNetMessage::ClStartInfo(info) => {
-                    info!(
-                        "StartInfo cid={} => name={}",
-                        net_msg.cid,
-                        String::from_utf8_lossy(info.name)
-                    );
+                    let player_name = String::from_utf8_lossy(info.name);
+                    info!("StartInfo cid={} => name={}", net_msg.cid, player_name);
+                    self.current_tick
+                        .players
+                        .insert(net_msg.cid, Player::new(player_name.to_string()));
                 }
                 net_msg::ClNetMessage::ClKill => {
                     debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
                 }
+                net_msg::ClNetMessage::ClSetTeam(team) => match team {
+                    Team::Spectators => {
+                        info!("cid={} to spec", net_msg.cid);
+                    }
+                    Team::Red | Team::Blue => {
+                        info!("cid={} to red/blue", net_msg.cid);
+                    }
+                },
                 _ => {}
             }
         } else {
@@ -220,17 +259,14 @@ impl Parser {
         sequence.ticks = Some(
             self.previous_ticks[sequence.start_tick as usize..self.tick_index as usize].to_vec(),
         );
-        // FIXME: ayaya
-        // if sequence.player_name.is_none() {
-        //     warn!("No player name for completed sequence!")
-        // }
+        sequence.player_name = Some(self.current_tick.players.get(&cid).unwrap().name.clone());
         self.completed_sequences.push(sequence);
     }
 
     fn handle_player_old(&mut self, player_old: PlayerOld) {
         info!("T={} {:?}", self.tick_index, &player_old);
         self.check_implicit_tick(player_old.cid);
-        self.current_tick.remove_cid(player_old.cid);
+        self.current_tick.remove_player_position(player_old.cid);
         self.complete_active_sequence(player_old.cid);
     }
 
@@ -330,7 +366,7 @@ fn main() {
 
     let mut all_sequences: Vec<PlayerSequence> = Vec::new();
 
-    for (file_index, entry) in fs::read_dir("data/random").unwrap().enumerate() {
+    for (file_index, entry) in fs::read_dir("data/broken").unwrap().enumerate() {
         let path = entry.unwrap().path();
         info!("{} parsing {}", file_index, path.to_string_lossy());
         let f = File::open(&path).unwrap();
