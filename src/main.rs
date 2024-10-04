@@ -250,11 +250,37 @@ impl Parser {
             .active_sequences
             .remove(&cid)
             .expect("no active sequence for cid found");
+
         sequence.end_tick = Some(self.tick_index);
-        sequence.ticks = Some(
-            self.previous_ticks[sequence.start_tick as usize..self.tick_index as usize].to_vec(),
-        );
         sequence.player_name = Some(self.player_names.get(&cid).unwrap().clone());
+
+        self.previous_ticks
+            .iter()
+            .skip((sequence.start_tick) as usize)
+            .take((sequence.end_tick.unwrap() - sequence.start_tick) as usize)
+            .for_each(|tick| {
+                let input_vector = tick.input_vectors.get(&cid);
+
+                // after the first position event there can be a delay until the first actual
+                // inputs FIXME: this feels like a dirty hotfix
+                if input_vector.is_none() {
+                    return;
+                }
+
+                sequence.input_vectors.push(
+                    *tick
+                        .input_vectors
+                        .get(&cid)
+                        .expect("No input vector found for cid"),
+                );
+                sequence.player_positions.push(
+                    *tick
+                        .player_positions
+                        .get(&cid)
+                        .expect("No player position found for cid"),
+                );
+            });
+
         self.completed_sequences.push(sequence);
     }
 
@@ -320,12 +346,10 @@ impl Parser {
             Chunk::PlayerOld(player) => self.handle_player_old(player),
             Chunk::PlayerNew(player) => self.handle_player_new(player),
             Chunk::Drop(drop) => self.handle_drop(drop),
+            Chunk::PlayerReady(rdy) => info!("T={} {:?}", self.tick_index, rdy),
+            Chunk::Join(join) => info!("T={} {:?}", self.tick_index, join),
             // ignore these
-            Chunk::JoinVer6(_)
-            | Chunk::JoinVer7(_)
-            | Chunk::Join(_)
-            | Chunk::DdnetVersion(_)
-            | Chunk::PlayerReady(_) => {}
+            Chunk::JoinVer6(_) | Chunk::JoinVer7(_) | Chunk::DdnetVersion(_) => {}
             _ => {
                 warn!(
                     "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
@@ -345,7 +369,9 @@ struct PlayerSequence {
     end_tick: Option<i32>,
     player_name: Option<String>,
     #[derivative(Debug = "ignore")]
-    ticks: Option<Vec<Tick>>,
+    input_vectors: Vec<[i32; 10]>,
+    #[derivative(Debug = "ignore")]
+    player_positions: Vec<(i32, i32)>,
 }
 
 impl PlayerSequence {
@@ -355,7 +381,8 @@ impl PlayerSequence {
             start_tick,
             end_tick: None,
             player_name: None,
-            ticks: None,
+            input_vectors: Vec::new(),
+            player_positions: Vec::new(),
         }
     }
 }
@@ -390,22 +417,23 @@ fn main() {
             parser.chunk_index, parser.tick_index
         );
 
-        for sequence in parser.completed_sequences.iter() {
-            info!("{:?}", &sequence);
-        }
-
         all_sequences.append(&mut parser.completed_sequences);
     }
 
     info!("extracted {} sequences", all_sequences.len());
+
+    for sequence in all_sequences.iter() {
+        info!("{:?}", &sequence);
+    }
 
     let total_ticks = all_sequences
         .iter()
         .map(|s| s.end_tick.unwrap() - s.start_tick)
         .sum::<i32>();
     info!(
-        "total ticks={} equal to {} minutes of gameplay",
+        "total ticks={} equal to {:.1} minutes or {:.1} hours of gameplay",
         total_ticks,
-        (total_ticks as f32 / (50. * 60.))
+        (total_ticks as f32 / (50. * 60.)),
+        (total_ticks as f32 / (50. * 60. * 60.))
     )
 }
