@@ -6,7 +6,8 @@ use serde_json::from_str;
 use std::fs;
 use std::{collections::HashMap, fs::File};
 use teehistorian::chunks::{
-    ConsoleCommand, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld, TickSkip,
+    ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
+    TickSkip,
 };
 use teehistorian::{Chunk, Th, ThBufReader};
 use twgame_core::net_msg::{self, Team};
@@ -92,6 +93,7 @@ impl Tick {
                 input_new.input
             );
             // FIXME: remove input vector once a player actually leaves the server?
+            panic!();
         }
         self.input_vectors.insert(input_new.cid, input_new.input);
     }
@@ -259,7 +261,19 @@ impl Parser {
         sequence.ticks = Some(
             self.previous_ticks[sequence.start_tick as usize..self.tick_index as usize].to_vec(),
         );
-        sequence.player_name = Some(self.current_tick.players.get(&cid).unwrap().name.clone());
+
+        // The last two ticks of a sequence are Drop followed by PlayerOld, so we can access the
+        // last name used by the player by accessing the tick before the Drop tick.
+        // FIXME: can i just do a temporary "name registry" which only stores the most recent name
+        // for each cid, but isnt tracked for each tick?
+        sequence.player_name = Some(
+            sequence.ticks.as_ref().unwrap()[sequence.ticks.as_ref().unwrap().len() - 3]
+                .players
+                .get(&cid)
+                .unwrap()
+                .name
+                .clone(),
+        );
         self.completed_sequences.push(sequence);
     }
 
@@ -302,6 +316,13 @@ impl Parser {
         }
     }
 
+    fn handle_drop(&mut self, drop: Drop) {
+        info!("T={} {:?}", self.tick_index, &drop);
+        self.current_tick.players.remove(&drop.cid);
+        self.current_tick.input_vectors.remove(&drop.cid);
+        // we dont clear player position, as this is handled by OldPlayer event
+    }
+
     fn parse_chunk(&mut self, chunk: Chunk) {
         assert!(
             !self.finished,
@@ -318,10 +339,10 @@ impl Parser {
             Chunk::ConsoleCommand(command) => self.handle_console_command(command),
             Chunk::PlayerOld(player) => self.handle_player_old(player),
             Chunk::PlayerNew(player) => self.handle_player_new(player),
+            Chunk::Drop(drop) => self.handle_drop(drop),
             // ignore these
             Chunk::JoinVer6(_)
             | Chunk::JoinVer7(_)
-            | Chunk::Drop(_)
             | Chunk::Join(_)
             | Chunk::DdnetVersion(_)
             | Chunk::PlayerReady(_) => {}
@@ -366,7 +387,7 @@ fn main() {
 
     let mut all_sequences: Vec<PlayerSequence> = Vec::new();
 
-    for (file_index, entry) in fs::read_dir("data/broken").unwrap().enumerate() {
+    for (file_index, entry) in fs::read_dir("data/random").unwrap().enumerate() {
         let path = entry.unwrap().path();
         info!("{} parsing {}", file_index, path.to_string_lossy());
         let f = File::open(&path).unwrap();
