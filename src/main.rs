@@ -1,7 +1,7 @@
 use core::str;
 use derivative::Derivative;
 use log::{debug, error, info, warn};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::fs;
 use std::{collections::HashMap, fs::File};
@@ -161,6 +161,8 @@ struct Parser {
 
     /// tracks player names
     player_names: HashMap<i32, String>,
+
+    map_name: Option<String>,
 }
 
 impl Parser {
@@ -175,6 +177,7 @@ impl Parser {
             active_sequences: HashMap::new(),
             completed_sequences: Vec::new(),
             player_names: HashMap::new(),
+            map_name: None,
         }
     }
 
@@ -261,9 +264,11 @@ impl Parser {
             .for_each(|tick| {
                 let input_vector = tick.input_vectors.get(&cid);
 
-                // after the first position event there can be a delay until the first actual
-                // inputs FIXME: this feels like a dirty hotfix
+                // after the first position event there can
+                // be a delay until the first actual inputs
+                // FIXME: this feels like a dirty hotfix
                 if input_vector.is_none() {
+                    sequence.start_tick += 1;
                     return;
                 }
 
@@ -361,7 +366,7 @@ impl Parser {
         self.chunk_index += 1;
     }
 }
-#[derive(Derivative)]
+#[derive(Derivative, Serialize)]
 #[derivative(Debug)]
 struct PlayerSequence {
     cid: i32,
@@ -418,12 +423,18 @@ fn main() {
         );
 
         all_sequences.append(&mut parser.completed_sequences);
+
+        if file_index > 2 {
+            break;
+        }
     }
 
     info!("extracted {} sequences", all_sequences.len());
 
-    for sequence in all_sequences.iter() {
+    for (seq_index, sequence) in all_sequences.iter().enumerate() {
         info!("{:?}", &sequence);
+        let file = File::create(format!("data/out/output_{}.json", seq_index)).unwrap();
+        serde_json::to_writer(file, &sequence).unwrap();
     }
 
     let total_ticks = all_sequences
@@ -435,5 +446,5 @@ fn main() {
         total_ticks,
         (total_ticks as f32 / (50. * 60.)),
         (total_ticks as f32 / (50. * 60. * 60.))
-    )
+    );
 }
