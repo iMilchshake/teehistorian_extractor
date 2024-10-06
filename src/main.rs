@@ -1,9 +1,5 @@
-use log::{debug, error, info, trace, warn};
-use std::{
-    fs::{self, File},
-    path::PathBuf,
-};
-use teehistorian::{Th, ThBufReader};
+use log::info;
+use std::{fs::File, path::PathBuf};
 
 use teehistorian_extractor::extractor::Extractor;
 
@@ -13,7 +9,7 @@ fn main() {
         .init();
 
     // parse
-    let sequences = Extractor::extract(PathBuf::from("./data/random/"));
+    let sequences = Extractor::get_sequences(PathBuf::from("./data/random/"));
     info!("extracted {} sequences", sequences.len());
 
     // export
