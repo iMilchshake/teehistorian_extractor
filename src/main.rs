@@ -1,6 +1,6 @@
 use core::str;
 use derivative::Derivative;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::fs;
@@ -183,25 +183,21 @@ impl Parser {
 
     /// Skips dt+1 ticks. In the case of dt=0 this just "finalizes" the current tick
     fn handle_tick_skip(&mut self, skip: TickSkip) {
+        trace!("T={}\t{:?}", self.tick_index, skip);
+
         self.tick_index += 1 + skip.dt;
         for _ in 0..(skip.dt + 1) {
             self.previous_ticks.push(self.current_tick.clone());
         }
-
-        if skip.dt > 0 {
-            debug!("Skipped {} ticks", 1 + skip.dt);
-        }
-
-        debug!("tick={}\t{:?}", self.tick_index, &self.current_tick);
     }
 
     fn handle_input_new(&mut self, input_new: InputNew) {
-        info!("T={} {:?}", self.tick_index, &input_new);
+        debug!("T={} {:?}", self.tick_index, &input_new);
         self.current_tick.add_init_input(input_new);
     }
 
     fn handle_input_diff(&mut self, input_diff: InputDiff) {
-        debug!("T={} {:?}", self.tick_index, &input_diff);
+        trace!("T={} {:?}", self.tick_index, &input_diff);
         self.current_tick.apply_input_diff(input_diff);
     }
 
@@ -211,7 +207,7 @@ impl Parser {
             match res {
                 net_msg::ClNetMessage::ClStartInfo(info) => {
                     let player_name = String::from_utf8_lossy(info.name).to_string();
-                    info!("StartInfo cid={} => name={}", net_msg.cid, player_name);
+                    debug!("StartInfo cid={} => name={}", net_msg.cid, player_name);
                     self.player_names.insert(net_msg.cid, player_name);
                 }
                 net_msg::ClNetMessage::ClKill => {
@@ -219,10 +215,10 @@ impl Parser {
                 }
                 net_msg::ClNetMessage::ClSetTeam(team) => match team {
                     Team::Spectators => {
-                        info!("cid={} to spec", net_msg.cid);
+                        debug!("cid={} to spec", net_msg.cid);
                     }
                     Team::Red | Team::Blue => {
-                        info!("cid={} to red/blue", net_msg.cid);
+                        debug!("cid={} to red/blue", net_msg.cid);
                     }
                 },
                 _ => {}
@@ -233,7 +229,7 @@ impl Parser {
     }
 
     fn handle_player_new(&mut self, player_new: PlayerNew) {
-        info!("T={} {:?}", self.tick_index, &player_new);
+        debug!("T={} {:?}", self.tick_index, &player_new);
         self.check_implicit_tick(player_new.cid);
         self.active_sequences.insert(
             player_new.cid,
@@ -243,7 +239,7 @@ impl Parser {
     }
 
     fn handle_player_diff(&mut self, player_diff: PlayerDiff) {
-        debug!("T={} {:?}", self.tick_index, &player_diff);
+        trace!("T={} {:?}", self.tick_index, &player_diff);
         self.check_implicit_tick(player_diff.cid);
         self.current_tick.apply_position_diff(player_diff);
     }
@@ -290,7 +286,7 @@ impl Parser {
     }
 
     fn handle_player_old(&mut self, player_old: PlayerOld) {
-        info!("T={} {:?}", self.tick_index, &player_old);
+        debug!("T={} {:?}", self.tick_index, &player_old);
         self.check_implicit_tick(player_old.cid);
         self.current_tick.remove_player_position(player_old.cid);
         self.complete_active_sequence(player_old.cid);
@@ -317,7 +313,13 @@ impl Parser {
             .iter()
             .map(|arg| String::from_utf8_lossy(arg).to_string())
             .collect();
-        debug!("cid={}, cmd={} args={}", command.cid, cmd, args.join(" "));
+        debug!(
+            "T={} CONSOLE COMMAND cid={}, cmd={} args={}",
+            self.tick_index,
+            command.cid,
+            cmd,
+            args.join(" ")
+        );
     }
 
     fn handle_eos(&mut self) {
@@ -326,10 +328,11 @@ impl Parser {
         for cid in cids {
             self.complete_active_sequence(cid);
         }
+        debug!("T={} EOS", self.tick_index);
     }
 
     fn handle_drop(&mut self, drop: Drop) {
-        info!("T={} {:?}", self.tick_index, &drop);
+        debug!("T={} {:?}", self.tick_index, &drop);
         self.current_tick.input_vectors.remove(&drop.cid);
         // we dont clear player position, as this is handled by OldPlayer event
     }
@@ -351,8 +354,8 @@ impl Parser {
             Chunk::PlayerOld(player) => self.handle_player_old(player),
             Chunk::PlayerNew(player) => self.handle_player_new(player),
             Chunk::Drop(drop) => self.handle_drop(drop),
-            Chunk::PlayerReady(rdy) => info!("T={} {:?}", self.tick_index, rdy),
-            Chunk::Join(join) => info!("T={} {:?}", self.tick_index, join),
+            Chunk::PlayerReady(rdy) => debug!("T={} {:?}", self.tick_index, rdy),
+            Chunk::Join(join) => debug!("T={} {:?}", self.tick_index, join),
             // ignore these
             Chunk::JoinVer6(_) | Chunk::JoinVer7(_) | Chunk::DdnetVersion(_) => {}
             _ => {
@@ -394,7 +397,7 @@ impl PlayerSequence {
 
 fn main() {
     colog::default_builder()
-        // .filter_level(log::LevelFilter::Debug)
+        .filter_level(log::LevelFilter::Info)
         .init();
 
     let mut all_sequences: Vec<PlayerSequence> = Vec::new();
