@@ -1,5 +1,7 @@
-use crate::parser::{DDNetSequence, GameInfo, Parser};
+use crate::parser::{DDNetSequence, Parser};
 use log::info;
+use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -9,16 +11,25 @@ use teehistorian::{Th, ThBufReader};
 
 // TODO: current weapon -> hard as i need to simulate the entire game state ..
 // TODO: player flags?
-#[derive(Serialize, Debug)]
+#[pyclass]
+#[derive(Serialize, Debug, Clone)]
 pub struct SimplifiedTick {
+    #[pyo3(get)]
     pos_x: i32,
+    #[pyo3(get)]
     pos_y: i32,
     /// left=-1, none=0, right=+1
+    #[pyo3(get)]
     move_dir: i32,
+    #[pyo3(get)]
     target_x: i32,
+    #[pyo3(get)]
     target_y: i32,
+    #[pyo3(get)]
     jump: bool,
+    #[pyo3(get)]
     fire: bool,
+    #[pyo3(get)]
     hook: bool,
 }
 
@@ -48,15 +59,19 @@ impl SimplifiedTick {
 }
 
 /// Simplified and more human-readible representation of DDNetSequences.
+#[pyclass]
 #[derive(Serialize, Debug)]
 pub struct SimpleSequence {
     /// the index of the sequences first tick for the corresponding teehistorian file
+    #[pyo3(get)]
     start_tick: usize,
 
     /// all relevant per-tick data
+    #[pyo3(get)]
     ticks: Vec<SimplifiedTick>,
 
     /// name of player
+    #[pyo3(get)]
     player_name: String,
 }
 
@@ -135,4 +150,30 @@ impl Extractor {
         all_sequences.append(&mut parser.completed_sequences);
         all_sequences
     }
+}
+
+#[pyfunction]
+fn get_simplified_ticks(path: PathBuf) -> PyResult<Vec<SimpleSequence>> {
+    let sequences = Extractor::get_all_ddnet_sequences(path);
+
+    let simple_sequences: Vec<SimpleSequence> = sequences
+        .iter()
+        .map(|ddnet_seq| SimpleSequence::from_ddnet_sequence(ddnet_seq))
+        .collect();
+
+    Ok(simple_sequences)
+}
+
+#[pymodule]
+fn teehistorian_extractor(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Add your classes to the module
+    m.add_class::<SimplifiedTick>()?;
+    m.add_class::<SimpleSequence>()?;
+
+    // Add your functions to the module
+    m.add_function(wrap_pyfunction!(get_simplified_ticks, m)?)?;
+
+    // Any additional initialization can be done here
+
+    Ok(())
 }
