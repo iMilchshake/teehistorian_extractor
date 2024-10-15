@@ -48,6 +48,8 @@ impl GameInfo {
 pub struct DDNetSequence {
     pub cid: i32,
     pub start_tick: i32,
+
+    /// exclusive
     pub end_tick: Option<i32>,
     pub player_name: Option<String>,
     #[derivative(Debug = "ignore")]
@@ -138,29 +140,34 @@ impl Parser {
     }
 
     fn handle_net_message(&mut self, net_msg: NetMessage) {
-        let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06);
-        if let Ok(res) = res {
-            match res {
-                net_msg::ClNetMessage::ClStartInfo(info) => {
-                    let player_name = String::from_utf8_lossy(info.name).to_string();
-                    debug!("StartInfo cid={} => name={}", net_msg.cid, player_name);
-                    self.player_names.insert(net_msg.cid, player_name);
-                }
-                net_msg::ClNetMessage::ClKill => {
-                    debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
-                }
-                net_msg::ClNetMessage::ClSetTeam(team) => match team {
-                    Team::Spectators => {
-                        debug!("cid={} to spec", net_msg.cid);
-                    }
-                    Team::Red | Team::Blue => {
-                        debug!("cid={} to red/blue", net_msg.cid);
-                    }
-                },
-                _ => {}
+        let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06)
+            .ok()
+            .expect("failed to parse NetMessage");
+
+        match res {
+            net_msg::ClNetMessage::ClStartInfo(info) => {
+                let player_name = String::from_utf8_lossy(info.name).to_string();
+                debug!("StartInfo cid={} => name={}", net_msg.cid, player_name);
+                self.player_names.insert(net_msg.cid, player_name);
             }
-        } else {
-            panic!("ayy");
+            net_msg::ClNetMessage::ClKill => {
+                debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
+            }
+            net_msg::ClNetMessage::ClSetTeam(team) => match team {
+                Team::Spectators => {
+                    debug!("cid={} to spec", net_msg.cid);
+                }
+                Team::Red | Team::Blue => {
+                    debug!("cid={} to red/blue", net_msg.cid);
+                }
+            },
+            net_msg::ClNetMessage::ClCommand(cmd) => {
+                error!(
+                    "cid={} command={:?} {:?}",
+                    net_msg.cid, cmd.name, cmd.arguments
+                );
+            }
+            _ => {}
         }
     }
 

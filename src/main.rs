@@ -1,7 +1,8 @@
 use log::info;
-use std::{fs::File, path::PathBuf};
+use serde_json::to_string;
+use std::{fs::File, io::Write, path::PathBuf, process::exit};
 
-use teehistorian_extractor::extractor::Extractor;
+use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
 
 fn main() {
     colog::default_builder()
@@ -9,15 +10,8 @@ fn main() {
         .init();
 
     // parse
-    let sequences = Extractor::get_sequences(PathBuf::from("./data/random/"));
+    let sequences = Extractor::get_all_ddnet_sequences(PathBuf::from("./data/random/"));
     info!("extracted {} sequences", sequences.len());
-
-    // export
-    for (seq_index, sequence) in sequences.iter().enumerate() {
-        info!("{:?}", &sequence);
-        let file = File::create(format!("data/out/output_{}.json", seq_index)).unwrap();
-        serde_json::to_writer(file, &sequence).unwrap();
-    }
 
     // summary
     let total_ticks = sequences
@@ -30,4 +24,20 @@ fn main() {
         (total_ticks as f32 / (50. * 60.)),
         (total_ticks as f32 / (50. * 60. * 60.))
     );
+
+    let mut file = File::create("data/out/all_sequences.json").expect("cant create export file");
+
+    info!("converting to simplified sequences");
+    let simple_sequences: Vec<SimpleSequence> = sequences
+        .iter()
+        .map(|ddnet_seq| SimpleSequence::from_ddnet_sequence(ddnet_seq))
+        .collect();
+
+    // TODO: this will explode if string is larger than main memory lol (chunk?)
+    info!("converting to json");
+    let json_data = to_string(&simple_sequences).unwrap();
+
+    info!("writing to file");
+    file.write_all(json_data.as_bytes()).unwrap();
+    info!("done :)");
 }
