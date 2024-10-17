@@ -51,13 +51,13 @@ impl SimplifiedTick {
 #[derive(Serialize, Debug)]
 pub struct SimpleSequence {
     /// the index of the sequences first tick for the corresponding teehistorian file
-    start_tick: usize,
+    pub start_tick: usize,
 
     /// all relevant per-tick data
-    ticks: Vec<SimplifiedTick>,
+    pub ticks: Vec<SimplifiedTick>,
 
     /// name of player
-    player_name: String,
+    pub player_name: String,
 }
 
 impl SimpleSequence {

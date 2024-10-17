@@ -1,6 +1,7 @@
 use log::info;
+use rmp_serde::to_vec as to_msgpack;
 use serde_json::to_string;
-use std::{fs::File, io::Write, path::PathBuf, process::exit};
+use std::{fs::File, io::Write, path::PathBuf, process::exit, time::Instant};
 
 use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
 
@@ -25,19 +26,26 @@ fn main() {
         (total_ticks as f32 / (50. * 60. * 60.))
     );
 
-    let mut file = File::create("data/out/all_sequences.json").expect("cant create export file");
+    let mut msgpack_file = File::create("data/out/all_sequences.msgpack")
+        .expect("cant create MessagePack export file");
 
     info!("converting to simplified sequences");
     let simple_sequences: Vec<SimpleSequence> = sequences
         .iter()
         .map(|ddnet_seq| SimpleSequence::from_ddnet_sequence(ddnet_seq))
+        .filter(|seq| seq.ticks.len() > 100)
         .collect();
 
-    // TODO: this will explode if string is larger than main memory lol (chunk?)
-    info!("converting to json");
-    let json_data = to_string(&simple_sequences).unwrap();
+    // MessagePack serialization and timing
+    info!("converting to MessagePack");
+    let msgpack_start = Instant::now();
+    let msgpack_data = to_msgpack(&simple_sequences).unwrap();
+    let msgpack_duration = msgpack_start.elapsed();
+    info!("MessagePack serialization took {:?}", msgpack_duration);
 
-    info!("writing to file");
-    file.write_all(json_data.as_bytes()).unwrap();
+    info!("writing MessagePack to file");
+    msgpack_file.write_all(&msgpack_data).unwrap();
+    info!("MessagePack data written to file");
+
     info!("done :)");
 }

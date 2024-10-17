@@ -4,11 +4,30 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 
+# for i in range(800):
+#     try:
+#         with open(f"data/out/output_{i}.json") as file:
+#             data = json.load(file)
+#             if data["player_name"] == "iMilchshake":
+#                 print(i, data["player_name"],
+#                       data["end_tick"] - data["start_tick"])
+#     except Exception as e:
+#         print(f"Error with file output_{i}.json: {e}")
+
 # Load data
-with open("data/out/output_1.json") as file:
+with open("data/out/output_608.json") as file:
     data = json.load(file)
 
-MAX_TICKS = 750
+print(data["input_vectors"][0])
+
+exit(0)
+
+MAX_TICKS = 5000
+TICKS_PER_SECOND = 50
+TICK_SKIP = 1
+
+print(data["player_name"])
+
 
 # Extract player positions
 player_x_positions, player_y_positions = np.array(
@@ -61,6 +80,7 @@ cursor_scatter, = axis.plot(
 
 
 def update(frame_number):
+    print(frame_number)
     player_scatter.set_data(
         player_x_positions[:frame_number], player_y_positions[:frame_number])
     cursor_scatter.set_data(
@@ -71,7 +91,7 @@ def update(frame_number):
 
 # Create animation
 animation = FuncAnimation(
-    figure, update, frames=range(1, MAX_TICKS + 1), interval=20)
+    figure, update, frames=range(1, MAX_TICKS + 1, 1 + TICK_SKIP), interval=(1000/TICKS_PER_SECOND))
 plt.legend()
 plt.tight_layout()
 plt.show()
