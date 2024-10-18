@@ -5,6 +5,31 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Tuple, List
 
 
+class TickIndex:
+    """
+    index that stores corresponding information in tick vector
+    """
+
+    POS_X = 0
+    POS_Y = 1
+    MOVE_DIR = 2
+    TARGET_X = 3
+    TARGET_Y = 4
+    JUMP = 5
+    FIRE = 6
+    HOOK = 7
+
+
+class SequenceIndex:
+    """
+    index that stores corresponding information in sequence vector
+    """
+
+    START_TICK = 0
+    TICKS = 1
+    PLAYER_NAME = 2
+
+
 class SequenceDataset(Dataset):
     def __init__(self, data):
         self.data = data
@@ -28,9 +53,9 @@ class SequenceDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[int, torch.Tensor, str]:
         sequence = self.data[idx]
-        start_tick = sequence[0]
-        ticks = sequence[1]
-        player_name = sequence[2]
+        start_tick = sequence[SequenceIndex.START_TICK]
+        ticks = sequence[SequenceIndex.TICKS]
+        player_name = sequence[SequenceIndex.PLAYER_NAME]
 
         # Convert ticks data to tensor
         ticks_tensor = torch.tensor(ticks, dtype=torch.float32)
@@ -51,10 +76,10 @@ print(f"t={time.perf_counter() - t0:.2f} sec")
 print(f"N={len(dataset)}")
 
 # Use the dataset with a DataLoader
-dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 # Iterate through the DataLoader
 for start_tick, ticks_tensor, player_name in dataloader:
-    print(f"Start Tick: {start_tick}")
-    print(f"Ticks Tensor: {ticks_tensor.shape}")
-    print(f"Player Names: {player_name}")
+    pos_x = ticks_tensor[0][0][TickIndex.POS_X]
+    pos_y = ticks_tensor[0][0][TickIndex.POS_Y]
+    print(f"start_pos: ({pos_x}, {pos_y})")
