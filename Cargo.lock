@@ -739,6 +739,7 @@ dependencies = [
  "serde",
  "serde_json",
  "teehistorian 0.10.3",
+ "thiserror",
  "twgame-core",
 ]
 

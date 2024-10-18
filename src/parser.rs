@@ -8,10 +8,21 @@ use teehistorian::chunks::{
     ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
     TickSkip,
 };
-use teehistorian::Chunk;
+use teehistorian::{Chunk, ThBufRead};
+use teehistorian::{Th, ThBufReader};
 use twgame_core::net_msg::{self, Team};
 
 use crate::tick::Tick;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ParseError {
+    #[error("could not parse netmsg")]
+    NetMsgParseError(),
+
+    #[error("Unstable Chunk occured that would lead to incorrect parsing if not handled: {0}")]
+    UnhandledChunkError(String),
+}
 
 #[derive(Debug, Deserialize)]
 pub struct GameInfo {
@@ -139,12 +150,14 @@ impl Parser {
         self.current_tick.apply_input_diff(input_diff);
     }
 
-    fn handle_net_message(&mut self, net_msg: NetMessage) {
-        let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06)
-            .ok()
-            .expect("failed to parse NetMessage");
+    fn handle_net_message(&mut self, net_msg: NetMessage) -> Result<(), ParseError> {
+        let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06).ok();
 
-        match res {
+        if res.is_none() {
+            return Err(ParseError::NetMsgParseError());
+        }
+
+        match res.unwrap() {
             net_msg::ClNetMessage::ClStartInfo(info) => {
                 let player_name = String::from_utf8_lossy(info.name).to_string();
                 debug!("StartInfo cid={} => name={}", net_msg.cid, player_name);
@@ -162,13 +175,15 @@ impl Parser {
                 }
             },
             net_msg::ClNetMessage::ClCommand(cmd) => {
-                error!(
+                info!(
                     "cid={} command={:?} {:?}",
                     net_msg.cid, cmd.name, cmd.arguments
                 );
             }
             _ => {}
         }
+
+        Ok(())
     }
 
     fn handle_player_new(&mut self, player_new: PlayerNew) {
@@ -280,7 +295,7 @@ impl Parser {
         // we dont clear player position, as this is handled by OldPlayer event
     }
 
-    pub fn parse_chunk(&mut self, chunk: Chunk) {
+    pub fn parse_chunk(&mut self, chunk: Chunk) -> Result<(), ParseError> {
         assert!(
             !self.finished,
             "parser already finished, EOS chunk was reached"
@@ -290,7 +305,7 @@ impl Parser {
             Chunk::TickSkip(skip) => self.handle_tick_skip(skip),
             Chunk::InputNew(inp_new) => self.handle_input_new(inp_new),
             Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
-            Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg),
+            Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg)?,
             Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff),
             Chunk::Eos => self.handle_eos(),
             Chunk::ConsoleCommand(command) => self.handle_console_command(command),
@@ -300,7 +315,13 @@ impl Parser {
             Chunk::PlayerReady(rdy) => debug!("T={} {:?}", self.tick_index, rdy),
             Chunk::Join(join) => debug!("T={} {:?}", self.tick_index, join),
             // ignore these
-            Chunk::JoinVer6(_) | Chunk::JoinVer7(_) | Chunk::DdnetVersion(_) => {}
+            Chunk::JoinVer6(_)
+            | Chunk::JoinVer7(_)
+            | Chunk::DdnetVersion(_)
+            | Chunk::PlayerTeam(_) => {}
+            Chunk::PlayerSwap(_) => {
+                return Err(ParseError::UnhandledChunkError("Player Swap".to_string()))
+            }
             _ => {
                 warn!(
                     "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
@@ -310,5 +331,6 @@ impl Parser {
         }
 
         self.chunk_index += 1;
+        Ok(())
     }
 }

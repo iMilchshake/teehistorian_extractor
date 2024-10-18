@@ -1,5 +1,5 @@
-use crate::parser::{DDNetSequence, GameInfo, Parser};
-use log::info;
+use crate::parser::{DDNetSequence, GameInfo, ParseError, Parser};
+use log::{debug, error, info};
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -99,40 +99,39 @@ impl Extractor {
         if path.is_dir() {
             for (file_index, entry) in fs::read_dir(path).unwrap().enumerate() {
                 let path = entry.unwrap().path();
-                info!(
+                debug!(
                     "Parsing index={} name={}",
                     file_index,
                     path.to_string_lossy()
                 );
-                sequences.extend(Self::get_ddnet_sequence(path));
+                sequences.extend(Self::get_ddnet_sequences(path));
             }
         } else if path.is_file() {
-            info!("Parsing name={}", path.to_string_lossy());
-            sequences.extend(Self::get_ddnet_sequence(path));
+            debug!("Parsing name={}", path.to_string_lossy());
+            sequences.extend(Self::get_ddnet_sequences(path));
         }
 
         sequences
     }
 
-    fn get_ddnet_sequence(path: PathBuf) -> Vec<DDNetSequence> {
-        let mut all_sequences: Vec<DDNetSequence> = Vec::new();
-
+    fn get_ddnet_sequences(path: PathBuf) -> Vec<DDNetSequence> {
         let f = File::open(&path).unwrap();
         let mut th = Th::parse(ThBufReader::new(f)).unwrap();
 
-        // TODO: do i need this info?
-        // let game_info = GameInfo::from_header_bytes(th.header().unwrap());
-
         let mut parser = Parser::new();
-        while !parser.finished {
-            if let Ok(chunk) = th.next_chunk() {
-                parser.parse_chunk(chunk);
-            } else {
+        while let Ok(chunk) = th.next_chunk() {
+            let parse_status = parser.parse_chunk(chunk);
+
+            if let Err(err) = parse_status {
+                error!(
+                    "error occured while parsing file. {:}. Recovering {:} completed sequences.",
+                    err,
+                    parser.completed_sequences.len()
+                );
                 break;
             }
         }
 
-        all_sequences.append(&mut parser.completed_sequences);
-        all_sequences
+        parser.completed_sequences
     }
 }

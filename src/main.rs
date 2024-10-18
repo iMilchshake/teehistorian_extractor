@@ -11,7 +11,7 @@ fn main() {
         .init();
 
     // parse
-    let sequences = Extractor::get_all_ddnet_sequences(PathBuf::from("./data/random/"));
+    let sequences = Extractor::get_all_ddnet_sequences(PathBuf::from("./data/random_new/"));
     info!("extracted {} sequences", sequences.len());
 
     // summary
