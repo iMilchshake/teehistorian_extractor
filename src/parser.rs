@@ -26,8 +26,8 @@ pub enum ParseError {
 
 #[derive(Debug, Deserialize)]
 pub struct GameInfo {
-    server_name: String,
-    map_name: String,
+    pub server_name: String,
+    pub map_name: String,
 }
 
 impl GameInfo {
@@ -41,6 +41,7 @@ impl GameInfo {
 
 /// Sequence of parsed player inputs and positions.
 /// Truthful to original DDNet representations.
+/// This struct is used while parsing the files, so it includes optional values.
 ///
 /// # Documentation for input_vectors
 /// https://gitlab.com/ddnet-rs/twgame/-/blob/594f3f4869d34d0382ecceeaeb52cf81853ade7c/twgame-core/src/lib.rs#L93
@@ -59,7 +60,6 @@ impl GameInfo {
 pub struct DDNetSequence {
     pub cid: i32,
     pub start_tick: i32,
-
     /// exclusive
     pub end_tick: Option<i32>,
     pub player_name: Option<String>,
@@ -67,6 +67,7 @@ pub struct DDNetSequence {
     pub input_vectors: Vec<[i32; 10]>,
     #[derivative(Debug = "ignore")]
     pub player_positions: Vec<(i32, i32)>,
+    pub map_name: Option<String>,
 }
 
 impl DDNetSequence {
@@ -78,40 +79,41 @@ impl DDNetSequence {
             player_name: None,
             input_vectors: Vec::new(),
             player_positions: Vec::new(),
+            map_name: None,
         }
     }
 }
 
 /// tracks state while parsing teehistorian file
 pub struct Parser {
-    /// tracks if end of stream (EOS) chunk has already been parsed
+    /// if end of stream (EOS) chunk has already been parsed
     pub finished: bool,
 
-    /// tracks current tick index
+    /// current tick index
     pub tick_index: i32,
 
-    /// tracks chunk index
+    /// chunk index
     pub chunk_index: u32,
 
-    /// tracks last seen cid in a player event (for implicit ticks)
+    /// last seen cid in a player event (for implicit ticks)
     last_cid: i32,
 
-    /// tracks current tick
+    /// current tick
     current_tick: Tick,
 
-    /// tracks all previous ticks
+    /// all previous ticks
     previous_ticks: Vec<Tick>,
 
-    /// tracks all active sequences
+    /// all active sequences
     active_sequences: HashMap<i32, DDNetSequence>,
 
-    /// tracks all completed sequences
+    /// all completed sequences
     pub completed_sequences: Vec<DDNetSequence>,
 
-    /// tracks player names
+    /// player names
     player_names: HashMap<i32, String>,
 
-    map_name: Option<String>,
+    game_info: Option<GameInfo>,
 }
 
 impl Parser {
@@ -120,14 +122,58 @@ impl Parser {
             finished: false,
             tick_index: 0,
             chunk_index: 0,
-            last_cid: -1, // can never be larger or equal to first cid
+            last_cid: -1, // can never be larger or equal to first cid, relevant for implicit tick
             current_tick: Tick::new(),
             previous_ticks: Vec::new(),
             active_sequences: HashMap::new(),
             completed_sequences: Vec::new(),
             player_names: HashMap::new(),
-            map_name: None,
+            game_info: None,
         }
+    }
+
+    pub fn parse_header(&mut self, header_bytes: &[u8]) {
+        let game_info = GameInfo::from_header_bytes(header_bytes);
+        self.game_info = Some(game_info);
+    }
+
+    pub fn parse_chunk(&mut self, chunk: Chunk) -> Result<(), ParseError> {
+        assert!(
+            !self.finished,
+            "parser already finished, EOS chunk was reached"
+        );
+
+        match chunk {
+            Chunk::TickSkip(skip) => self.handle_tick_skip(skip),
+            Chunk::InputNew(inp_new) => self.handle_input_new(inp_new),
+            Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
+            Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg)?,
+            Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff),
+            Chunk::Eos => self.handle_eos(),
+            Chunk::ConsoleCommand(command) => self.handle_console_command(command),
+            Chunk::PlayerOld(player) => self.handle_player_old(player),
+            Chunk::PlayerNew(player) => self.handle_player_new(player),
+            Chunk::Drop(drop) => self.handle_drop(drop),
+            Chunk::PlayerReady(rdy) => debug!("T={} {:?}", self.tick_index, rdy),
+            Chunk::Join(join) => debug!("T={} {:?}", self.tick_index, join),
+            // ignore these
+            Chunk::JoinVer6(_)
+            | Chunk::JoinVer7(_)
+            | Chunk::DdnetVersion(_)
+            | Chunk::PlayerTeam(_) => {}
+            Chunk::PlayerSwap(_) => {
+                return Err(ParseError::UnhandledChunkError("Player Swap".to_string()))
+            }
+            _ => {
+                warn!(
+                    "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
+                    self.chunk_index, self.tick_index, chunk
+                );
+            }
+        }
+
+        self.chunk_index += 1;
+        Ok(())
     }
 
     /// Skips dt+1 ticks. In the case of dt=0 this just "finalizes" the current tick
@@ -210,6 +256,7 @@ impl Parser {
 
         sequence.end_tick = Some(self.tick_index);
         sequence.player_name = Some(self.player_names.get(&cid).unwrap().clone());
+        sequence.map_name = self.game_info.as_ref().map(|g| g.map_name.clone());
 
         self.previous_ticks
             .iter()
@@ -218,9 +265,8 @@ impl Parser {
             .for_each(|tick| {
                 let input_vector = tick.input_vectors.get(&cid);
 
-                // after the first position event there can
-                // be a delay until the first actual inputs
-                // FIXME: this feels like a dirty hotfix
+                // after the first player/position event there can be a
+                // delay until the first actual inputs, so we just skip those
                 if input_vector.is_none() {
                     sequence.start_tick += 1;
                     return;
@@ -293,44 +339,5 @@ impl Parser {
         debug!("T={} {:?}", self.tick_index, &drop);
         self.current_tick.input_vectors.remove(&drop.cid);
         // we dont clear player position, as this is handled by OldPlayer event
-    }
-
-    pub fn parse_chunk(&mut self, chunk: Chunk) -> Result<(), ParseError> {
-        assert!(
-            !self.finished,
-            "parser already finished, EOS chunk was reached"
-        );
-
-        match chunk {
-            Chunk::TickSkip(skip) => self.handle_tick_skip(skip),
-            Chunk::InputNew(inp_new) => self.handle_input_new(inp_new),
-            Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
-            Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg)?,
-            Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff),
-            Chunk::Eos => self.handle_eos(),
-            Chunk::ConsoleCommand(command) => self.handle_console_command(command),
-            Chunk::PlayerOld(player) => self.handle_player_old(player),
-            Chunk::PlayerNew(player) => self.handle_player_new(player),
-            Chunk::Drop(drop) => self.handle_drop(drop),
-            Chunk::PlayerReady(rdy) => debug!("T={} {:?}", self.tick_index, rdy),
-            Chunk::Join(join) => debug!("T={} {:?}", self.tick_index, join),
-            // ignore these
-            Chunk::JoinVer6(_)
-            | Chunk::JoinVer7(_)
-            | Chunk::DdnetVersion(_)
-            | Chunk::PlayerTeam(_) => {}
-            Chunk::PlayerSwap(_) => {
-                return Err(ParseError::UnhandledChunkError("Player Swap".to_string()))
-            }
-            _ => {
-                warn!(
-                    "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
-                    self.chunk_index, self.tick_index, chunk
-                );
-            }
-        }
-
-        self.chunk_index += 1;
-        Ok(())
     }
 }

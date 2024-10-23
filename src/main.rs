@@ -1,10 +1,10 @@
-use arrow::array::{ArrayRef, BooleanArray, Int32Array};
+use arrow::array::{BooleanArray, Int32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 use log::info;
 use std::sync::Arc;
-use std::{fs::File, path::PathBuf, time::Instant};
+use std::{fs::File, path::PathBuf};
 use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

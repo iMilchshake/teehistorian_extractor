@@ -1,4 +1,5 @@
 use crate::parser::{DDNetSequence, GameInfo, ParseError, Parser};
+use arrow::error;
 use log::{debug, error, info};
 use serde::Serialize;
 use std::{
@@ -58,6 +59,9 @@ pub struct SimpleSequence {
 
     /// name of player
     pub player_name: String,
+
+    /// name of map
+    pub map_name: String,
 }
 
 impl SimpleSequence {
@@ -87,6 +91,7 @@ impl SimpleSequence {
             start_tick,
             ticks,
             player_name: ddnet_sequence.player_name.clone().unwrap(),
+            map_name: ddnet_sequence.map_name.clone().unwrap(),
         }
     }
 }
@@ -121,7 +126,15 @@ impl Extractor {
         let f = File::open(&path).unwrap();
         let mut th = Th::parse(ThBufReader::new(f)).unwrap();
 
+        let header_bytes = th.header();
+
+        if header_bytes.is_err() {
+            error!("coulnt parse header of file {:?}", path);
+            return Vec::new();
+        }
+
         let mut parser = Parser::new();
+        parser.parse_header(header_bytes.unwrap());
         while let Ok(chunk) = th.next_chunk() {
             let parse_status = parser.parse_chunk(chunk);
 
