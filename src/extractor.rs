@@ -11,15 +11,15 @@ use teehistorian::{Th, ThBufReader};
 // TODO: player flags?
 #[derive(Serialize, Debug)]
 pub struct SimplifiedTick {
-    pos_x: i32,
-    pos_y: i32,
+    pub pos_x: i32,
+    pub pos_y: i32,
     /// left=-1, none=0, right=+1
-    move_dir: i32,
-    target_x: i32,
-    target_y: i32,
-    jump: bool,
-    fire: bool,
-    hook: bool,
+    pub move_dir: i32,
+    pub target_x: i32,
+    pub target_y: i32,
+    pub jump: bool,
+    pub fire: bool,
+    pub hook: bool,
 }
 
 ///     direction: input[0],
@@ -93,6 +93,8 @@ impl SimpleSequence {
 
 pub struct Extractor;
 impl Extractor {
+    /// Extract all sequences of all teehistorian files in the provided path.
+    /// Can either be a folder or an individual teehistorian file.
     pub fn get_all_ddnet_sequences(path: PathBuf) -> Vec<DDNetSequence> {
         let mut sequences: Vec<DDNetSequence> = Vec::new();
 
@@ -114,6 +116,7 @@ impl Extractor {
         sequences
     }
 
+    /// Extract ddnet sequences for a single teehistorian file
     fn get_ddnet_sequences(path: PathBuf) -> Vec<DDNetSequence> {
         let f = File::open(&path).unwrap();
         let mut th = Th::parse(ThBufReader::new(f)).unwrap();
