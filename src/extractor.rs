@@ -1,5 +1,5 @@
 use crate::parser::{DDNetSequence, Parser};
-use log::{debug, error};
+use log::{debug, error, warn};
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -138,8 +138,9 @@ impl Extractor {
             let parse_status = parser.parse_chunk(chunk);
 
             if let Err(err) = parse_status {
-                error!(
-                    "error occured while parsing file. {:}. Recovering {:} completed sequences.",
+                warn!(
+                    "path={:?}\nerror={:}\nrecovering {:} completed sequences.",
+                    path,
                     err,
                     parser.completed_sequences.len()
                 );

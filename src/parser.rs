@@ -8,8 +8,7 @@ use teehistorian::chunks::{
     ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
     TickSkip,
 };
-use teehistorian::{Chunk, ThBufRead};
-use teehistorian::{Th, ThBufReader};
+use teehistorian::Chunk;
 use twgame_core::net_msg::{self, Team};
 
 use crate::tick::Tick;
@@ -22,6 +21,9 @@ pub enum ParseError {
 
     #[error("Unstable Chunk occured that would lead to incorrect parsing if not handled: {0}")]
     UnhandledChunkError(String),
+
+    #[error("Parser expected some different state")]
+    UnexpectedParserState(),
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,9 +151,9 @@ impl Parser {
             Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
             Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg)?,
             Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff),
-            Chunk::Eos => self.handle_eos(),
-            Chunk::ConsoleCommand(command) => self.handle_console_command(command),
-            Chunk::PlayerOld(player) => self.handle_player_old(player),
+            Chunk::Eos => self.handle_eos()?,
+            Chunk::ConsoleCommand(command) => self.handle_console_command(command)?,
+            Chunk::PlayerOld(player) => self.handle_player_old(player)?,
             Chunk::PlayerNew(player) => self.handle_player_new(player),
             Chunk::Drop(drop) => self.handle_drop(drop),
             Chunk::PlayerReady(rdy) => debug!("T={} {:?}", self.tick_index, rdy),
@@ -160,9 +162,19 @@ impl Parser {
             Chunk::JoinVer6(_)
             | Chunk::JoinVer7(_)
             | Chunk::DdnetVersion(_)
-            | Chunk::PlayerTeam(_) => {}
+            | Chunk::PlayerTeam(_)
+            | Chunk::TeamPractice(_)
+            | Chunk::DdnetVersionOld(_)
+            | Chunk::AuthInit(_)
+            | Chunk::TeamSaveSuccess(_) => {}
             Chunk::PlayerSwap(_) => {
                 return Err(ParseError::UnhandledChunkError("Player Swap".to_string()))
+            }
+            Chunk::RejoinVer6(_) => {
+                return Err(ParseError::UnhandledChunkError("RejoinVer6".to_string()))
+            }
+            Chunk::TeamLoadSuccess(_) => {
+                return Err(ParseError::UnhandledChunkError("team load".to_string()))
             }
             _ => {
                 warn!(
@@ -211,6 +223,7 @@ impl Parser {
             }
             net_msg::ClNetMessage::ClKill => {
                 debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
+                self.complete_active_sequence(net_msg.cid, false)?;
             }
             net_msg::ClNetMessage::ClSetTeam(team) => match team {
                 Team::Spectators => {
@@ -248,11 +261,18 @@ impl Parser {
         self.current_tick.apply_position_diff(player_diff);
     }
 
-    fn complete_active_sequence(&mut self, cid: i32) {
-        let mut sequence = self
-            .active_sequences
-            .remove(&cid)
-            .expect("no active sequence for cid found");
+    fn complete_active_sequence(&mut self, cid: i32, drop_player: bool) -> Result<(), ParseError> {
+        let mut sequence = match self.active_sequences.remove(&cid) {
+            Some(seq) => seq,
+            None => return Err(ParseError::UnexpectedParserState()),
+        };
+
+        if drop_player {
+            self.current_tick.remove_player_position(cid);
+        } else {
+            self.active_sequences
+                .insert(cid, DDNetSequence::new(cid, self.tick_index));
+        }
 
         sequence.end_tick = Some(self.tick_index);
         sequence.player_name = Some(self.player_names.get(&cid).unwrap().clone());
@@ -287,13 +307,13 @@ impl Parser {
             });
 
         self.completed_sequences.push(sequence);
+        Ok(())
     }
 
-    fn handle_player_old(&mut self, player_old: PlayerOld) {
+    fn handle_player_old(&mut self, player_old: PlayerOld) -> Result<(), ParseError> {
         debug!("T={} {:?}", self.tick_index, &player_old);
         self.check_implicit_tick(player_old.cid);
-        self.current_tick.remove_player_position(player_old.cid);
-        self.complete_active_sequence(player_old.cid);
+        self.complete_active_sequence(player_old.cid, true)
     }
 
     // a tick is implicit [...] when a player with lower cid is
@@ -307,9 +327,9 @@ impl Parser {
         self.last_cid = cid;
     }
 
-    fn handle_console_command(&mut self, command: ConsoleCommand) {
+    fn handle_console_command(&mut self, command: ConsoleCommand) -> Result<(), ParseError> {
         if command.cid == -1 {
-            return; // ignore server commands
+            return Ok(()); // ignore server commands
         }
         let cmd = String::from_utf8_lossy(&command.cmd);
         let args: Vec<String> = command
@@ -324,15 +344,23 @@ impl Parser {
             cmd,
             args.join(" ")
         );
+
+        // handle rescue
+        if cmd == "r" {
+            self.complete_active_sequence(command.cid, false)?;
+        }
+
+        Ok(())
     }
 
-    fn handle_eos(&mut self) {
+    fn handle_eos(&mut self) -> Result<(), ParseError> {
         self.finished = true;
         let cids: Vec<i32> = self.active_sequences.keys().cloned().collect();
         for cid in cids {
-            self.complete_active_sequence(cid);
+            self.complete_active_sequence(cid, true)?;
         }
         debug!("T={} EOS", self.tick_index);
+        Ok(())
     }
 
     fn handle_drop(&mut self, drop: Drop) {

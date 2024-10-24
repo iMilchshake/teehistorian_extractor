@@ -1,4 +1,4 @@
-use log::{debug, error, info, trace, warn};
+use log::{error, warn};
 use std::collections::HashMap;
 use teehistorian::chunks::{InputDiff, InputNew, PlayerDiff, PlayerNew};
 
