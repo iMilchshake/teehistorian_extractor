@@ -1,6 +1,5 @@
-use crate::parser::{DDNetSequence, GameInfo, ParseError, Parser};
-use arrow::error;
-use log::{debug, error, info};
+use crate::parser::{DDNetSequence, Parser};
+use log::{debug, error};
 use serde::Serialize;
 use std::{
     fs::{self, File},
