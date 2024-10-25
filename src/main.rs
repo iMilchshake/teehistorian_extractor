@@ -3,6 +3,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 use clap::Parser;
+use env_logger::{Builder, Target};
 use log::info;
 use log::LevelFilter;
 use std::sync::Arc;
@@ -31,7 +32,10 @@ struct Cli {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
 
-    colog::default_builder().filter_level(args.log_level).init();
+    colog::default_builder()
+        .filter_level(args.log_level)
+        .target(env_logger::Target::Stdout)
+        .init();
 
     // Parse sequences
     let sequences = Extractor::get_all_ddnet_sequences(args.input);
@@ -43,6 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(SimpleSequence::from_ddnet_sequence)
         .filter(|seq| seq.ticks.len() > args.min_ticks)
         .collect();
+
+    info!("extracted {} sequences", sequences.len());
 
     let total_ticks = simple_sequences
         .iter()

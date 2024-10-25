@@ -98,7 +98,7 @@ pub struct Parser {
     pub chunk_index: u32,
 
     /// last seen cid in a player event (for implicit ticks)
-    last_cid: i32,
+    last_cid: Option<i32>,
 
     /// current tick
     current_tick: Tick,
@@ -124,7 +124,7 @@ impl Parser {
             finished: false,
             tick_index: 0,
             chunk_index: 0,
-            last_cid: -1, // can never be larger or equal to first cid, relevant for implicit tick
+            last_cid: None,
             current_tick: Tick::new(),
             previous_ticks: Vec::new(),
             active_sequences: HashMap::new(),
@@ -146,7 +146,7 @@ impl Parser {
         );
 
         match chunk {
-            Chunk::TickSkip(skip) => self.handle_tick_skip(skip),
+            Chunk::TickSkip(skip) => self.handle_tick_skip(skip.dt, false),
             Chunk::InputNew(inp_new) => self.handle_input_new(inp_new),
             Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
             Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg)?,
@@ -189,12 +189,22 @@ impl Parser {
     }
 
     /// Skips dt+1 ticks. In the case of dt=0 this just "finalizes" the current tick
-    fn handle_tick_skip(&mut self, skip: TickSkip) {
-        trace!("T={}\t{:?}", self.tick_index, skip);
+    fn handle_tick_skip(&mut self, dt: i32, implicit: bool) {
+        trace!(
+            "T={}\tSKIP dt={}{}",
+            self.tick_index,
+            dt,
+            if implicit { " (implicit)" } else { "" }
+        );
 
-        self.tick_index += 1 + skip.dt;
-        for _ in 0..(skip.dt + 1) {
+        self.tick_index += 1 + dt;
+        for _ in 0..(dt + 1) {
             self.previous_ticks.push(self.current_tick.clone());
+        }
+
+        // on explicit tick skip, clear last_cid so no unintended implicit skip follows
+        if !implicit {
+            self.last_cid = None
         }
     }
 
@@ -246,8 +256,8 @@ impl Parser {
     }
 
     fn handle_player_new(&mut self, player_new: PlayerNew) {
-        debug!("T={} {:?}", self.tick_index, &player_new);
         self.check_implicit_tick(player_new.cid);
+        debug!("T={} {:?}", self.tick_index, &player_new);
         self.active_sequences.insert(
             player_new.cid,
             DDNetSequence::new(player_new.cid, self.tick_index),
@@ -256,8 +266,8 @@ impl Parser {
     }
 
     fn handle_player_diff(&mut self, player_diff: PlayerDiff) {
-        trace!("T={} {:?}", self.tick_index, &player_diff);
         self.check_implicit_tick(player_diff.cid);
+        trace!("T={} {:?}", self.tick_index, &player_diff);
         self.current_tick.apply_position_diff(player_diff);
     }
 
@@ -267,11 +277,28 @@ impl Parser {
             None => return Err(ParseError::UnexpectedParserState()),
         };
 
+        debug!(
+            "T={} completing sequence for cid={}, end_tick={}",
+            self.tick_index, cid, self.tick_index
+        );
+
         if drop_player {
             self.current_tick.remove_player_position(cid);
         } else {
             self.active_sequences
-                .insert(cid, DDNetSequence::new(cid, self.tick_index));
+                .insert(cid, DDNetSequence::new(cid, self.tick_index + 1));
+            debug!(
+                "T={} initialized new sequence for cid={}, start_tick={}",
+                self.tick_index,
+                cid,
+                self.tick_index + 1
+            );
+        }
+
+        // if sequence end is before or at its start, just skip it
+        // this can e.g. happen due to respawn+map-vote or spamming /rescue
+        if sequence.start_tick >= self.tick_index {
+            return Ok(());
         }
 
         sequence.end_tick = Some(self.tick_index);
@@ -311,8 +338,8 @@ impl Parser {
     }
 
     fn handle_player_old(&mut self, player_old: PlayerOld) -> Result<(), ParseError> {
-        debug!("T={} {:?}", self.tick_index, &player_old);
         self.check_implicit_tick(player_old.cid);
+        debug!("T={} {:?}", self.tick_index, &player_old);
         self.complete_active_sequence(player_old.cid, true)
     }
 
@@ -321,10 +348,12 @@ impl Parser {
     // source: https://ddnet.org/libtw2-doc/teehistorian/
     // INFO: i believe the docs are wrong, and its lower or equal(!) cid
     fn check_implicit_tick(&mut self, cid: i32) {
-        if cid <= self.last_cid {
-            self.handle_tick_skip(TickSkip { dt: 0 });
+        if let Some(last) = self.last_cid {
+            if cid <= last {
+                self.handle_tick_skip(0, true);
+            }
         }
-        self.last_cid = cid;
+        self.last_cid = Some(cid);
     }
 
     fn handle_console_command(&mut self, command: ConsoleCommand) -> Result<(), ParseError> {

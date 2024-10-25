@@ -1492,6 +1492,7 @@ dependencies = [
  "clap",
  "colog",
  "derivative",
+ "env_logger",
  "log 0.4.22",
  "parquet",
  "rmp-serde",
