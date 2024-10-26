@@ -158,15 +158,6 @@ impl Parser {
             Chunk::Drop(drop) => self.handle_drop(drop),
             Chunk::PlayerReady(rdy) => debug!("T={} {:?}", self.tick_index, rdy),
             Chunk::Join(join) => debug!("T={} {:?}", self.tick_index, join),
-            // ignore these
-            Chunk::JoinVer6(_)
-            | Chunk::JoinVer7(_)
-            | Chunk::DdnetVersion(_)
-            | Chunk::PlayerTeam(_)
-            | Chunk::TeamPractice(_)
-            | Chunk::DdnetVersionOld(_)
-            | Chunk::AuthInit(_)
-            | Chunk::TeamSaveSuccess(_) => {}
             Chunk::PlayerSwap(_) => {
                 return Err(ParseError::UnhandledChunkError("Player Swap".to_string()))
             }
@@ -176,6 +167,15 @@ impl Parser {
             Chunk::TeamLoadSuccess(_) => {
                 return Err(ParseError::UnhandledChunkError("team load".to_string()))
             }
+            // ignore these
+            Chunk::JoinVer6(_)
+            | Chunk::JoinVer7(_)
+            | Chunk::DdnetVersion(_)
+            | Chunk::PlayerTeam(_)
+            | Chunk::TeamPractice(_)
+            | Chunk::DdnetVersionOld(_)
+            | Chunk::AuthInit(_)
+            | Chunk::TeamSaveSuccess(_) => {}
             _ => {
                 warn!(
                     "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
