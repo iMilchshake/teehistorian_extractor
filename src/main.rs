@@ -9,11 +9,11 @@ use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
 #[derive(Parser, Debug)]
 struct Cli {
     /// Input data directory
-    #[clap(short, long, default_value = "./data/random/")]
+    #[clap(short, long, default_value = "./data/teehistorian/")]
     input: PathBuf,
 
     /// Output Arrow file path
-    #[clap(short, long, default_value = "data/out/random/")]
+    #[clap(short, long, default_value = "./data/out/")]
     output_path: PathBuf,
 
     /// Minimum ticks per sequence to include
