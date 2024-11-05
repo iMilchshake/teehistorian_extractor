@@ -1,8 +1,11 @@
 use clap::Parser;
 use log::info;
 use log::LevelFilter;
+use ndarray_npy::write_npy;
 use std::fs;
+use std::fs::File;
 use std::path::PathBuf;
+use teehistorian_extractor::export;
 use teehistorian_extractor::export::export_to_dir;
 use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
 
@@ -48,6 +51,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|seq| seq.tick_count > args.min_ticks)
         .collect();
     info!("extracted {} sequences", sequences.len());
+
+    export::convert_and_save_sequences_to_npz(&simple_sequences, "test.npz");
+
+    info!("exported as tensor!");
+
+    return Ok(());
 
     // determine total tick count
     let total_ticks = simple_sequences.iter().map(|s| s.tick_count).sum::<usize>();
