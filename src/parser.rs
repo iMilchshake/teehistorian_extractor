@@ -6,7 +6,6 @@ use serde_json::from_str;
 use std::collections::HashMap;
 use teehistorian::chunks::{
     ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
-    TickSkip,
 };
 use teehistorian::Chunk;
 use twgame_core::net_msg::{self, Team};
@@ -22,8 +21,8 @@ pub enum ParseError {
     #[error("Unstable Chunk occured that would lead to incorrect parsing if not handled: {0}")]
     UnhandledChunkError(String),
 
-    #[error("Parser expected some different state")]
-    UnexpectedParserState(),
+    #[error("Parser expected some different state: {0}")]
+    UnexpectedParserState(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -274,7 +273,11 @@ impl Parser {
     fn complete_active_sequence(&mut self, cid: i32, drop_player: bool) -> Result<(), ParseError> {
         let mut sequence = match self.active_sequences.remove(&cid) {
             Some(seq) => seq,
-            None => return Err(ParseError::UnexpectedParserState()),
+            None => {
+                return Err(ParseError::UnexpectedParserState(
+                    "coulnt find expected active sequence".to_string(),
+                ))
+            }
         };
 
         debug!(
@@ -332,6 +335,21 @@ impl Parser {
                         .expect("No player position found for cid"),
                 );
             });
+
+        if sequence.input_vectors.len() < 3 {
+            return Ok(());
+        }
+
+        let last_index = sequence.player_positions.len() - 1;
+        let x_diff =
+            sequence.player_positions[last_index - 2].0 - sequence.player_positions[last_index].0;
+        let y_diff =
+            sequence.player_positions[last_index - 2].1 - sequence.player_positions[last_index].1;
+        if x_diff > 50 || y_diff > 50 {
+            return Err(ParseError::UnexpectedParserState(
+                "position diff too large!".to_string(),
+            ));
+        }
 
         self.completed_sequences.push(sequence);
         Ok(())
