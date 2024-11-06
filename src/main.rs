@@ -1,13 +1,11 @@
 use clap::Parser;
 use log::info;
 use log::LevelFilter;
-use ndarray_npy::write_npy;
 use std::fs;
-use std::fs::File;
 use std::path::PathBuf;
 use teehistorian_extractor::export;
-use teehistorian_extractor::export::export_to_dir;
 use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
+use teehistorian_extractor::preprocess;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -52,11 +50,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     info!("extracted {} sequences", sequences.len());
 
-    export::convert_and_save_sequences_to_npz(&simple_sequences, "test.npz");
-
-    info!("exported as tensor!");
-
-    return Ok(());
+    // export::convert_and_save_sequences_to_npz(&simple_sequences, "test.npz");
+    // info!("exported as tensor!");
 
     // determine total tick count
     let total_ticks = simple_sequences.iter().map(|s| s.tick_count).sum::<usize>();
@@ -67,7 +62,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (total_ticks as f32 / (50. * 60. * 60.))
     );
 
-    export_to_dir(&simple_sequences, &args.output_path);
-    info!("Arrow data written to {:?}", &args.output_path);
+    // export_to_dir(&simple_sequences, &args.output_path);
+    // info!("Arrow data written to {:?}", &args.output_path);
+
+    let top_k = preprocess::get_top_k_players(&simple_sequences, 40);
+
+    for (player, ticks) in top_k {
+        println!(
+            "{:15}: {} ticks => {:.1} hours",
+            player,
+            ticks,
+            (ticks as f32 / (50. * 60. * 60.))
+        );
+    }
+
+    for sequence in simple_sequences.iter().take(10) {
+        let non_afk = preprocess::get_non_afk_durations(sequence, 400);
+        println!("non-afk durations: {:?}", non_afk);
+        println!("Full move_dir sequence: {:?}", sequence.move_dir);
+
+        for &(start, end) in &non_afk {
+            let subsequence = &sequence.move_dir[start..=end];
+            println!(
+                "Active subsequence from {} to {}: {:?}",
+                start, end, subsequence
+            );
+        }
+    }
+
     Ok(())
 }
