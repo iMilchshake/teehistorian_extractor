@@ -1,11 +1,30 @@
 use clap::Parser;
 use log::info;
 use log::LevelFilter;
+use plotlib::page::Page;
+use plotlib::repr::Histogram;
+use plotlib::repr::HistogramBins;
+use plotlib::view::ContinuousView;
 use std::fs;
 use std::path::PathBuf;
-use teehistorian_extractor::export;
 use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
 use teehistorian_extractor::preprocess;
+
+fn plot(sequences: &[SimpleSequence], title: &str) {
+    let tick_counts: Vec<f64> = sequences
+        .iter()
+        .map(|s| s.tick_count as f64)
+        .filter(|&ticks| ticks < 10000.0)
+        .collect();
+    let hist = Histogram::from_slice(&tick_counts, HistogramBins::Count(100));
+    let view = ContinuousView::new()
+        .add(hist)
+        .x_label("Tick Count")
+        .y_label("Frequency");
+    Page::single(&view)
+        .save(format!("histogram_{}.svg", title))
+        .expect("Failed to save plot");
+}
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -39,22 +58,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // Parse sequences
-    let sequences = Extractor::get_all_ddnet_sequences(args.input);
-    info!("extracted {} sequences", sequences.len());
+    let ddnet_sequences = Extractor::get_all_ddnet_sequences(args.input);
+    info!("extracted {} sequences", ddnet_sequences.len());
 
     // Convert to simplified sequences
-    let simple_sequences: Vec<SimpleSequence> = sequences
+    let sequences: Vec<SimpleSequence> = ddnet_sequences
         .iter()
         .map(SimpleSequence::from_ddnet_sequence)
-        .filter(|seq| seq.tick_count > args.min_ticks)
         .collect();
-    info!("extracted {} sequences", sequences.len());
+    info!("extracted {} sequences", ddnet_sequences.len());
 
     // export::convert_and_save_sequences_to_npz(&simple_sequences, "test.npz");
     // info!("exported as tensor!");
 
     // determine total tick count
-    let total_ticks = simple_sequences.iter().map(|s| s.tick_count).sum::<usize>();
+    let total_ticks = sequences.iter().map(|s| s.tick_count).sum::<usize>();
     info!(
         "total ticks={} equal to {:.1} minutes or {:.1} hours of gameplay",
         total_ticks,
@@ -65,30 +83,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // export_to_dir(&simple_sequences, &args.output_path);
     // info!("Arrow data written to {:?}", &args.output_path);
 
-    let top_k = preprocess::get_top_k_players(&simple_sequences, 40);
-
-    for (player, ticks) in top_k {
-        println!(
-            "{:15}: {} ticks => {:.1} hours",
-            player,
-            ticks,
-            (ticks as f32 / (50. * 60. * 60.))
-        );
+    for (player, seq_count) in preprocess::get_top_k_players(&sequences, 20, false) {
+        println!("{:15}: {}", player, seq_count,);
     }
 
-    for sequence in simple_sequences.iter().take(10) {
-        let non_afk = preprocess::get_non_afk_durations(sequence, 400);
-        println!("non-afk durations: {:?}", non_afk);
-        println!("Full move_dir sequence: {:?}", sequence.move_dir);
-
-        for &(start, end) in &non_afk {
-            let subsequence = &sequence.move_dir[start..=end];
-            println!(
-                "Active subsequence from {} to {}: {:?}",
-                start, end, subsequence
-            );
-        }
+    for (player, ticks) in preprocess::get_top_k_players(&sequences, 20, true) {
+        println!("{:15}: {:.1}h", player, ticks as f32 / (50. * 60. * 60.));
     }
+
+    let extracted_sequences: Vec<SimpleSequence> = sequences
+        .iter()
+        .flat_map(|sequence| {
+            let durations = preprocess::get_non_afk_durations(sequence, 1000);
+            let padded_durations = preprocess::pad_durations(durations, sequence.tick_count - 1, 5);
+            preprocess::extract_sub_sequences(sequence, padded_durations)
+        })
+        //.filter(|seq| seq.tick_count > args.min_ticks)
+        .collect();
+
+    for (player, seq_count) in preprocess::get_top_k_players(&extracted_sequences, 20, false) {
+        println!("{:15}: {}", player, seq_count,);
+    }
+
+    for (player, ticks) in preprocess::get_top_k_players(&extracted_sequences, 20, true) {
+        println!("{:15}: {:.1}h", player, ticks as f32 / (50. * 60. * 60.));
+    }
+
+    plot(&sequences, "before_afk");
+    plot(&extracted_sequences, "after_afk");
+
+    // TODO: maybe not split on rescue/kill ??
 
     Ok(())
 }
