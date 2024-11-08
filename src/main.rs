@@ -99,9 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log_sequence_info(&sequences);
 
     // determine total tick count
-
-    // export_to_dir(&simple_sequences, &args.output_path);
-    // info!("Arrow data written to {:?}", &args.output_path);
+// export_to_dir(&simple_sequences, &args.output_path); info!("Arrow data written to {:?}", &args.output_path);
 
     let mut extracted_sequences: Vec<SimpleSequence> = sequences
         .iter()
@@ -132,13 +130,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{:15}: {:.1}h", player, ticks as f32 / (50. * 60. * 60.));
     }
 
-    export::convert_and_save_sequences_to_npz(&extracted_sequences, "test.npz");
-    info!("exported as tensor!");
 
     // plot(&sequences, "before_afk");
     // plot(&extracted_sequences, after_afk");
+    
+    let mut subsequences = Vec::new();
+    for sequence in extracted_sequences {
+        let sequence_count = sequence.tick_count / args.min_ticks;
 
-    // TODO: maybe not split on rescue/kill ??
+        let mut durations = Vec::new();
+        for idx in 0..sequence_count {
+            let start = args.min_ticks * idx;
+            durations.push((start, start+args.min_ticks-1));
+        }
+
+        subsequences.extend(preprocess::extract_sub_sequences(&sequence, durations));
+    }
+
+    log_sequence_info(&subsequences);
+
+    export::convert_and_save_sequences_to_npz(&subsequences, "test.npz");
+    info!("exported as tensor!");
 
     Ok(())
 }
