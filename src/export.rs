@@ -111,7 +111,6 @@ pub fn export_to_dir(sequences: &[SimpleSequence], output_path: &PathBuf) {
     write_record_batch_to_file(&lookup_record_batch, &sequences_path).unwrap();
 }
 
-// TODO: padding and cutting?
 pub fn convert_and_save_sequences_to_npz(sequences: &[SimpleSequence], file_path: &str) {
     let num_fields = 8;
 

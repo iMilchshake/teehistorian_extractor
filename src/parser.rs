@@ -114,11 +114,15 @@ pub struct Parser {
     /// player names
     player_names: HashMap<i32, String>,
 
+    // game info such as map name
     game_info: Option<GameInfo>,
+
+    cut_kill: bool,
+    cut_rescue: bool,
 }
 
 impl Parser {
-    pub fn new() -> Parser {
+    pub fn new(cut_kill: bool, cut_rescue: bool) -> Parser {
         Parser {
             finished: false,
             tick_index: 0,
@@ -130,6 +134,8 @@ impl Parser {
             completed_sequences: Vec::new(),
             player_names: HashMap::new(),
             game_info: None,
+            cut_kill,
+            cut_rescue,
         }
     }
 
@@ -232,7 +238,9 @@ impl Parser {
             }
             net_msg::ClNetMessage::ClKill => {
                 debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
-                self.complete_active_sequence(net_msg.cid, false)?;
+                if self.cut_kill {
+                    self.complete_active_sequence(net_msg.cid, false)?;
+                }
             }
             net_msg::ClNetMessage::ClSetTeam(team) => match team {
                 Team::Spectators => {
@@ -340,16 +348,16 @@ impl Parser {
             return Ok(());
         }
 
-        let last_index = sequence.player_positions.len() - 1;
-        let x_diff =
-            sequence.player_positions[last_index - 2].0 - sequence.player_positions[last_index].0;
-        let y_diff =
-            sequence.player_positions[last_index - 2].1 - sequence.player_positions[last_index].1;
-        if x_diff > 50 || y_diff > 50 {
-            return Err(ParseError::UnexpectedParserState(
-                "position diff too large!".to_string(),
-            ));
-        }
+        // let last_index = sequence.player_positions.len() - 1;
+        // let x_diff =
+        //     sequence.player_positions[last_index - 2].0 - sequence.player_positions[last_index].0;
+        // let y_diff =
+        //     sequence.player_positions[last_index - 2].1 - sequence.player_positions[last_index].1;
+        // if x_diff > 50 || y_diff > 50 {
+        //     return Err(ParseError::UnexpectedParserState(
+        //         "position diff too large!".to_string(),
+        //     ));
+        // }
 
         self.completed_sequences.push(sequence);
         Ok(())
@@ -393,7 +401,7 @@ impl Parser {
         );
 
         // handle rescue
-        if cmd == "r" {
+        if self.cut_rescue && cmd == "r" {
             self.complete_active_sequence(command.cid, false)?;
         }
 
