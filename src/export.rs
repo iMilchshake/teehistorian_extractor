@@ -1,4 +1,4 @@
-use crate::extractor::SimpleSequence;
+use crate::extractor::Sequence;
 use arrow::array::{BooleanArray, Int32Array, StringArray, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
@@ -9,25 +9,25 @@ use ndarray_npy::NpzWriter;
 use std::sync::Arc;
 use std::{fs::File, path::PathBuf};
 
-fn int32_array<F>(sequences: &[SimpleSequence], f: F) -> Arc<dyn arrow::array::Array>
+fn int32_array<F>(sequences: &[Sequence], f: F) -> Arc<dyn arrow::array::Array>
 where
-    F: Fn(&SimpleSequence) -> Vec<i32>,
+    F: Fn(&Sequence) -> Vec<i32>,
 {
     Arc::new(Int32Array::from(
         sequences.iter().flat_map(|s| f(s)).collect::<Vec<i32>>(),
     ))
 }
 
-fn bool_array<F>(sequences: &[SimpleSequence], f: F) -> Arc<dyn arrow::array::Array>
+fn bool_array<F>(sequences: &[Sequence], f: F) -> Arc<dyn arrow::array::Array>
 where
-    F: Fn(&SimpleSequence) -> Vec<bool>,
+    F: Fn(&Sequence) -> Vec<bool>,
 {
     Arc::new(BooleanArray::from(
         sequences.iter().flat_map(|s| f(s)).collect::<Vec<bool>>(),
     ))
 }
 
-fn to_arrow_flat_ticks(sequences: &[SimpleSequence]) -> Option<RecordBatch> {
+fn to_arrow_flat_ticks(sequences: &[Sequence]) -> Option<RecordBatch> {
     let sequence_ids: Vec<i32> = sequences
         .iter()
         .enumerate()
@@ -61,7 +61,7 @@ fn to_arrow_flat_ticks(sequences: &[SimpleSequence]) -> Option<RecordBatch> {
     RecordBatch::try_new(Arc::new(schema), arrays).ok()
 }
 
-fn to_arrow_sequence_info(sequences: &[SimpleSequence]) -> Option<RecordBatch> {
+fn to_arrow_sequence_info(sequences: &[Sequence]) -> Option<RecordBatch> {
     let schema = Schema::new(vec![
         Field::new("sequence_id", DataType::Int32, false),
         Field::new("start_tick", DataType::UInt64, false),
@@ -98,7 +98,7 @@ fn write_record_batch_to_file(
     Ok(())
 }
 
-pub fn export_to_dir(sequences: &[SimpleSequence], output_path: &PathBuf) {
+pub fn export_to_dir(sequences: &[Sequence], output_path: &PathBuf) {
     assert!(output_path.is_dir());
 
     let main_record_batch = to_arrow_flat_ticks(&sequences).unwrap();
@@ -111,7 +111,8 @@ pub fn export_to_dir(sequences: &[SimpleSequence], output_path: &PathBuf) {
     write_record_batch_to_file(&lookup_record_batch, &sequences_path).unwrap();
 }
 
-pub fn convert_and_save_sequences_to_npz(sequences: &[SimpleSequence], file_path: &str) {
+/// store the tick data of sequences in numpy npy files in a npz archive
+pub fn convert_and_save_sequences_to_npz(sequences: &[Sequence], file_path: &str) {
     let num_fields = 8;
 
     // Create a new .npz file

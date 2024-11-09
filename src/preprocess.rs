@@ -1,6 +1,6 @@
 use log::warn;
 
-use crate::extractor::SimpleSequence;
+use crate::extractor::Sequence;
 use std::collections::HashMap;
 
 pub struct Duration {
@@ -75,10 +75,7 @@ impl Duration {
         adjusted_durations
     }
 
-    pub fn get_non_afk_durations(
-        sequence: &SimpleSequence,
-        tick_threshold: usize,
-    ) -> Vec<Duration> {
+    pub fn get_non_afk_durations(sequence: &Sequence, tick_threshold: usize) -> Vec<Duration> {
         let mut afk = true;
         let mut first_move_tick: Option<usize> = None;
         let mut last_move_tick: Option<usize> = None;
@@ -121,16 +118,13 @@ impl Duration {
         durations
     }
 
-    pub fn extract_sub_sequences(
-        sequence: &SimpleSequence,
-        durations: Vec<Duration>,
-    ) -> Vec<SimpleSequence> {
+    pub fn extract_sub_sequences(sequence: &Sequence, durations: Vec<Duration>) -> Vec<Sequence> {
         let mut sub_sequences = Vec::new();
 
         for duration in durations {
             assert!(duration.start < sequence.tick_count && duration.end < sequence.tick_count);
 
-            let sub_sequence = SimpleSequence {
+            let sub_sequence = Sequence {
                 start_tick: sequence.start_tick + duration.start,
                 tick_count: duration.end - duration.start + 1,
                 pos_x: sequence.pos_x[duration.start..=duration.end].to_vec(),
@@ -153,7 +147,7 @@ impl Duration {
 }
 
 pub fn get_top_k_players(
-    sequences: &[SimpleSequence],
+    sequences: &[Sequence],
     k: usize,
     count_ticks: bool,
 ) -> Vec<(String, usize)> {

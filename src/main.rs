@@ -8,11 +8,11 @@ use plotlib::view::ContinuousView;
 use std::fs;
 use std::path::PathBuf;
 use teehistorian_extractor::export;
-use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
+use teehistorian_extractor::extractor::{Extractor, Sequence};
 use teehistorian_extractor::preprocess;
 use teehistorian_extractor::preprocess::Duration;
 
-fn plot(sequences: &[SimpleSequence], title: &str) {
+fn plot(sequences: &[Sequence], title: &str) {
     let tick_counts: Vec<f64> = sequences
         .iter()
         .map(|s| s.tick_count as f64)
@@ -28,7 +28,7 @@ fn plot(sequences: &[SimpleSequence], title: &str) {
         .expect("Failed to save plot");
 }
 
-fn log_sequence_info(sequences: &[SimpleSequence]) {
+fn log_sequence_info(sequences: &[Sequence]) {
     let total_ticks = sequences.iter().map(|s| s.tick_count).sum::<usize>();
     info!(
         "sequences={}, ticks={} => {:.1} hours of gameplay",
@@ -90,23 +90,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Extractor::get_all_ddnet_sequences(args.input, args.cut_kill, args.cut_rescue);
     info!("extracted {} ddnet sequences", ddnet_sequences.len());
 
-    // convert so simple sequences
-    let mut sequences: Vec<SimpleSequence> = Vec::new();
+    // convert so sequences
+    let mut sequences: Vec<Sequence> = Vec::new();
     while let Some(ddnet_seq) = ddnet_sequences.pop() {
-        let simple_seq = SimpleSequence::from_ddnet_sequence(&ddnet_seq);
+        let sequence = Sequence::from_ddnet_sequence(&ddnet_seq);
 
-        if simple_seq.tick_count > args.min_ticks {
-            sequences.push(simple_seq);
+        if sequence.tick_count > args.min_ticks {
+            sequences.push(sequence);
         }
     }
 
-    info!("converted to {} simple sequences", sequences.len());
+    info!("converted to {} sequences", sequences.len());
     log_sequence_info(&sequences);
 
-    // determine total tick count
-    // export_to_dir(&simple_sequences, &args.output_path); info!("Arrow data written to {:?}", &args.output_path);
-
-    let extracted_sequences: Vec<SimpleSequence> = sequences
+    let extracted_sequences: Vec<Sequence> = sequences
         .iter()
         .flat_map(|sequence| {
             let durations = Duration::get_non_afk_durations(sequence, args.afk_ticks);

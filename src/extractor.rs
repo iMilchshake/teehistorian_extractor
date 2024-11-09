@@ -9,7 +9,7 @@ use teehistorian::{Th, ThBufReader};
 
 /// Simplified and more human-readible representation of DDNetSequences.
 #[derive(Serialize, Debug)]
-pub struct SimpleSequence {
+pub struct Sequence {
     pub start_tick: usize,
     pub tick_count: usize,
     pub pos_x: Vec<i32>,
@@ -24,8 +24,8 @@ pub struct SimpleSequence {
     pub map_name: String,
 }
 
-impl SimpleSequence {
-    pub fn from_ddnet_sequence(ddnet_sequence: &DDNetSequence) -> SimpleSequence {
+impl Sequence {
+    pub fn from_ddnet_sequence(ddnet_sequence: &DDNetSequence) -> Sequence {
         let start_tick = ddnet_sequence.start_tick as usize;
         let end_tick = ddnet_sequence
             .end_tick
@@ -62,7 +62,7 @@ impl SimpleSequence {
             hook.push(input_vector[5] == 1);
         }
 
-        SimpleSequence {
+        Sequence {
             start_tick,
             tick_count,
             pos_x,
