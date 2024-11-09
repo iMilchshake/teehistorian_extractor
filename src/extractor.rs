@@ -10,8 +10,13 @@ use teehistorian::{Th, ThBufReader};
 /// Simplified and more human-readible representation of DDNetSequences.
 #[derive(Serialize, Debug)]
 pub struct Sequence {
+    // sequence data
     pub start_tick: usize,
     pub tick_count: usize,
+    pub player_name: String,
+    pub map_name: String,
+
+    // tick data
     pub pos_x: Vec<i32>,
     pub pos_y: Vec<i32>,
     pub move_dir: Vec<i32>,
@@ -20,8 +25,6 @@ pub struct Sequence {
     pub jump: Vec<bool>,
     pub fire: Vec<bool>,
     pub hook: Vec<bool>,
-    pub player_name: String,
-    pub map_name: String,
 }
 
 impl Sequence {
@@ -76,6 +79,13 @@ impl Sequence {
             player_name: ddnet_sequence.player_name.clone().unwrap(),
             map_name: ddnet_sequence.map_name.clone().unwrap(),
         }
+    }
+
+    pub fn to_meta_csv(&self) -> String {
+        format!(
+            "{},{},{},{}",
+            self.tick_count, self.player_name, self.start_tick, self.map_name
+        )
     }
 }
 

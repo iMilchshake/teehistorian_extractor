@@ -9,6 +9,9 @@ use ndarray_npy::NpzWriter;
 use std::sync::Arc;
 use std::{fs::File, path::PathBuf};
 
+use std::fs::OpenOptions;
+use std::io;
+
 fn int32_array<F>(sequences: &[Sequence], f: F) -> Arc<dyn arrow::array::Array>
 where
     F: Fn(&Sequence) -> Vec<i32>,
@@ -111,13 +114,17 @@ pub fn export_to_dir(sequences: &[Sequence], output_path: &PathBuf) {
     write_record_batch_to_file(&lookup_record_batch, &sequences_path).unwrap();
 }
 
-/// store the tick data of sequences in numpy npy files in a npz archive
-pub fn convert_and_save_sequences_to_npz(sequences: &[Sequence], file_path: &str) {
+/// Store the tick data of sequences in numpy npy files in a npz archive
+/// Also store meta data about these sequences in a .json file
+pub fn convert_and_save_sequences_to_npz(sequences: &[Sequence], file_path: PathBuf) {
     let num_fields = 8;
 
     // Create a new .npz file
-    let file = File::create(file_path).expect("Failed to create .npz file");
-    let mut npz = NpzWriter::new(file);
+    let tick_file = File::create(file_path.join("ticks.npz")).expect("Failed to create ticks.npz");
+    let mut npz = NpzWriter::new(tick_file);
+
+    let sequence_file =
+        File::create(file_path.join("sequences.json")).expect("Failed to create sequences.json");
 
     for (i, seq) in sequences.iter().enumerate() {
         let sequence_len = seq.pos_x.len();
