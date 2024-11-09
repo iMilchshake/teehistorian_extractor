@@ -56,16 +56,20 @@ struct Cli {
     #[clap(short, long, default_value = "1000")]
     afk_ticks: usize,
 
+    /// ticks of padding around afk durations
+    #[clap(short = 'p', long, default_value = "15")]
+    afk_padding: usize,
+
     /// Logging level (error, warn, info, debug, trace)
     #[clap(short, long, default_value = "info")]
     log_level: LevelFilter,
 
     /// cut sequence on player kill
-    #[clap(long = "ck")]
+    #[clap(short = 'k', long)]
     cut_kill: bool,
 
     /// cut sequence on player rescue (/r)
-    #[clap(long = "cr")]
+    #[clap(short = 'r', long)]
     cut_rescue: bool,
 }
 
@@ -106,7 +110,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .flat_map(|sequence| {
             let durations = Duration::get_non_afk_durations(sequence, args.afk_ticks);
-            let durations = Duration::pad_durations(durations, sequence.tick_count, 5); // TODO: padding args?
+            let durations =
+                Duration::pad_durations(durations, sequence.tick_count, args.afk_padding);
             let durations: Vec<Duration> = durations
                 .iter()
                 .flat_map(|duration| duration.cut_duration(args.min_ticks))
