@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use teehistorian_extractor::export;
 use teehistorian_extractor::extractor::{Extractor, SimpleSequence};
 use teehistorian_extractor::preprocess;
+use teehistorian_extractor::preprocess::Duration;
 
 fn plot(sequences: &[SimpleSequence], title: &str) {
     let tick_counts: Vec<f64> = sequences
@@ -99,27 +100,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     log_sequence_info(&sequences);
 
     // determine total tick count
-// export_to_dir(&simple_sequences, &args.output_path); info!("Arrow data written to {:?}", &args.output_path);
+    // export_to_dir(&simple_sequences, &args.output_path); info!("Arrow data written to {:?}", &args.output_path);
 
-    let mut extracted_sequences: Vec<SimpleSequence> = sequences
+    let extracted_sequences: Vec<SimpleSequence> = sequences
         .iter()
         .flat_map(|sequence| {
-            let durations = preprocess::get_non_afk_durations(sequence, args.afk_ticks);
-            let padded_durations = preprocess::pad_durations(durations, sequence.tick_count - 1, 5); // padding args?
-            preprocess::extract_sub_sequences(sequence, padded_durations)
+            let durations = Duration::get_non_afk_durations(sequence, args.afk_ticks);
+            let durations = Duration::pad_durations(durations, sequence.tick_count, 5); // TODO: padding args?
+            let durations: Vec<Duration> = durations
+                .iter()
+                .flat_map(|duration| duration.cut_duration(args.min_ticks))
+                .collect();
+            Duration::extract_sub_sequences(sequence, durations)
         })
         .collect();
 
     info!("extracted gameplay sequences:");
-    log_sequence_info(&extracted_sequences);
-
-    for index in (0..extracted_sequences.len()).rev() {
-        if extracted_sequences[index].tick_count < args.min_ticks {
-            extracted_sequences.remove(index);
-        }
-    }
-
-    info!("filtered out too short sequences:");
     log_sequence_info(&extracted_sequences);
 
     for (player, seq_count) in preprocess::get_top_k_players(&extracted_sequences, 20, false) {
@@ -130,26 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{:15}: {:.1}h", player, ticks as f32 / (50. * 60. * 60.));
     }
 
-
-    // plot(&sequences, "before_afk");
-    // plot(&extracted_sequences, after_afk");
-    
-    let mut subsequences = Vec::new();
-    for sequence in extracted_sequences {
-        let sequence_count = sequence.tick_count / args.min_ticks;
-
-        let mut durations = Vec::new();
-        for idx in 0..sequence_count {
-            let start = args.min_ticks * idx;
-            durations.push((start, start+args.min_ticks-1));
-        }
-
-        subsequences.extend(preprocess::extract_sub_sequences(&sequence, durations));
-    }
-
-    log_sequence_info(&subsequences);
-
-    export::convert_and_save_sequences_to_npz(&subsequences, "test.npz");
+    export::convert_and_save_sequences_to_npz(&extracted_sequences, "test.npz");
     info!("exported as tensor!");
 
     Ok(())
