@@ -4,13 +4,13 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
-use ndarray::Array2;
 use ndarray_npy::NpzWriter;
 use std::sync::Arc;
 use std::{fs::File, path::PathBuf};
 
+use std::fs::create_dir_all;
 use std::fs::OpenOptions;
-use std::io;
+use std::io::Write;
 
 fn int32_array<F>(sequences: &[Sequence], f: F) -> Arc<dyn arrow::array::Array>
 where
@@ -114,44 +114,43 @@ pub fn export_to_dir(sequences: &[Sequence], output_path: &PathBuf) {
     write_record_batch_to_file(&lookup_record_batch, &sequences_path).unwrap();
 }
 
+/// Initialze empty dataset, use add function to add (batches) of data to it
+pub fn initialize_dataset(folder_path: &PathBuf) {
+    create_dir_all(folder_path).expect("Failed to create dataset directory");
+    File::create(folder_path.join("ticks.npz")).expect("Failed to create ticks.npz");
+    let mut csv_file =
+        File::create(folder_path.join("sequences.csv")).expect("Failed to create sequences.csv");
+    writeln!(csv_file, "player,start,ticks,map").expect("Failed to write header to sequences.csv");
+}
+
 /// Store the tick data of sequences in numpy npy files in a npz archive
 /// Also store meta data about these sequences in a .json file
-pub fn convert_and_save_sequences_to_npz(sequences: &[Sequence], file_path: PathBuf) {
-    let num_fields = 8;
+/// Initialize a dataset before using this function to add data to it!
+pub fn add_to_dataset(sequences: &[Sequence], folder_path: PathBuf) {
+    let tick_file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open(folder_path.join("ticks.npz"))
+        .expect("Failed to open ticks.npz for appending");
+    let mut npz_write = NpzWriter::new(tick_file);
 
-    // Create a new .npz file
-    let tick_file = File::create(file_path.join("ticks.npz")).expect("Failed to create ticks.npz");
-    let mut npz = NpzWriter::new(tick_file);
-
-    let sequence_file =
-        File::create(file_path.join("sequences.json")).expect("Failed to create sequences.json");
+    let mut csv_file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open(folder_path.join("sequences.csv"))
+        .expect("Failed to open sequences.csv for appending");
 
     for (i, seq) in sequences.iter().enumerate() {
-        let sequence_len = seq.pos_x.len();
-
-        // Pre-allocate a single Vec with enough space for the current sequence
-        let mut data = Vec::with_capacity(sequence_len * num_fields);
-
-        data.extend_from_slice(&seq.pos_x);
-        data.extend_from_slice(&seq.pos_y);
-        data.extend_from_slice(&seq.move_dir);
-        data.extend_from_slice(&seq.target_x);
-        data.extend_from_slice(&seq.target_y);
-
-        // Convert bool Vecs to i32 on the fly
-        data.extend(seq.jump.iter().map(|&b| b as i32));
-        data.extend(seq.fire.iter().map(|&b| b as i32));
-        data.extend(seq.hook.iter().map(|&b| b as i32));
-
-        // Convert the flat Vec to an Array2 where each row is a timestep across fields
-        let array = Array2::from_shape_vec((sequence_len, num_fields), data)
-            .expect("Shape should match data length");
-
-        // Save the array to the .npz file with a unique name
-        npz.add_array(i.to_string(), &array)
+        npz_write
+            .add_array(i.to_string(), &seq.ticks_to_array2())
             .expect("Failed to add array to .npz file");
+        let meta_csv = format!(
+            "{},{},{},{}",
+            seq.player_name, seq.start_tick, seq.tick_count, seq.map_name
+        );
+        writeln!(csv_file, "{}", meta_csv).expect("Failed to write to sequences.csv");
     }
 
     // Finalize the .npz file
-    npz.finish().expect("Failed to finalize .npz file");
+    npz_write.finish().expect("Failed to finalize .npz file");
 }

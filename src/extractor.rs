@@ -1,5 +1,6 @@
 use crate::parser::{DDNetSequence, Parser};
 use log::{debug, error, warn};
+use ndarray::Array2;
 use serde::Serialize;
 use std::{
     fs::{self, File},
@@ -81,11 +82,27 @@ impl Sequence {
         }
     }
 
-    pub fn to_meta_csv(&self) -> String {
+    pub fn meta_to_csv(&self) -> String {
         format!(
             "{},{},{},{}",
             self.tick_count, self.player_name, self.start_tick, self.map_name
         )
+    }
+
+    pub fn ticks_to_array2(&self) -> Array2<i32> {
+        let sequence_len = self.pos_x.len();
+        let mut data = Vec::with_capacity(sequence_len * 8);
+
+        data.extend_from_slice(&self.pos_x);
+        data.extend_from_slice(&self.pos_y);
+        data.extend_from_slice(&self.move_dir);
+        data.extend_from_slice(&self.target_x);
+        data.extend_from_slice(&self.target_y);
+        data.extend(self.jump.iter().map(|&b| b as i32));
+        data.extend(self.fire.iter().map(|&b| b as i32));
+        data.extend(self.hook.iter().map(|&b| b as i32));
+
+        Array2::from_shape_vec((sequence_len, 8), data).expect("Shape should match data length")
     }
 }
 

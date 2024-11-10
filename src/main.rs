@@ -5,7 +5,6 @@ use plotlib::page::Page;
 use plotlib::repr::Histogram;
 use plotlib::repr::HistogramBins;
 use plotlib::view::ContinuousView;
-use std::fs;
 use std::path::PathBuf;
 use teehistorian_extractor::export;
 use teehistorian_extractor::extractor::{Extractor, Sequence};
@@ -44,19 +43,19 @@ struct Cli {
     #[clap(short, long, default_value = "./data/teehistorian/")]
     input: PathBuf,
 
-    /// Output Arrow file path
-    #[clap(short, long, default_value = "./data/out/")]
-    output_path: PathBuf,
+    /// Filepath for output dataset folder
+    #[clap(short, long, default_value = "./data/out/dataset/")]
+    output_folder: PathBuf,
 
     /// Minimum ticks per sequence to include
     #[clap(short, long, default_value = "1000")]
     min_ticks: usize,
 
-    /// ticks of no movement that counts as player being AFK
+    /// Ticks of no movement that counts as player being AFK
     #[clap(short, long, default_value = "1000")]
     afk_ticks: usize,
 
-    /// ticks of padding around afk durations
+    /// Ticks of padding around afk durations
     #[clap(short = 'p', long, default_value = "15")]
     afk_padding: usize,
 
@@ -64,33 +63,35 @@ struct Cli {
     #[clap(short, long, default_value = "info")]
     log_level: LevelFilter,
 
-    /// cut sequence on player kill
+    /// Cut sequence on player kill
     #[clap(short = 'k', long)]
     cut_kill: bool,
 
-    /// cut sequence on player rescue (/r)
+    /// Cut sequence on player rescue (/r)
     #[clap(short = 'r', long)]
     cut_rescue: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
-
-    // ensure output_path is a folder and exists
-    fs::create_dir_all(&args.output_path).expect("Failed to create directory");
-    assert!(args.output_path.is_dir(), "Output path is not a directory");
-
     colog::default_builder()
         .filter_level(args.log_level)
         .target(env_logger::Target::Stdout)
         .init();
 
-    // Parse sequences
+    // start with initializing output dataset, in case it fails
+    export::initialize_dataset(&args.output_folder);
+    assert!(
+        args.output_folder.is_dir(),
+        "Output path is not a directory"
+    );
+
+    // parse ddnet sequences
     let mut ddnet_sequences =
         Extractor::get_all_ddnet_sequences(args.input, args.cut_kill, args.cut_rescue);
     info!("extracted {} ddnet sequences", ddnet_sequences.len());
 
-    // convert so sequences
+    // convert to sequences
     let mut sequences: Vec<Sequence> = Vec::new();
     while let Some(ddnet_seq) = ddnet_sequences.pop() {
         let sequence = Sequence::from_ddnet_sequence(&ddnet_seq);
@@ -128,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{:15}: {:.1}h", player, ticks as f32 / (50. * 60. * 60.));
     }
 
-    export::convert_and_save_sequences_to_npz(&extracted_sequences, "test.npz");
+    export::add_to_dataset(&extracted_sequences, args.output_folder);
     info!("exported as tensor!");
 
     Ok(())
