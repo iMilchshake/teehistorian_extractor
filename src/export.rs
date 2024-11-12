@@ -5,6 +5,7 @@ use arrow::error::ArrowError;
 use arrow::ipc::writer::FileWriter;
 use arrow::record_batch::RecordBatch;
 use ndarray_npy::NpzWriter;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fs::File, path::PathBuf};
 
@@ -114,43 +115,100 @@ pub fn export_to_dir(sequences: &[Sequence], output_path: &PathBuf) {
     write_record_batch_to_file(&lookup_record_batch, &sequences_path).unwrap();
 }
 
-/// Initialze empty dataset, use add function to add (batches) of data to it
-pub fn initialize_dataset(folder_path: &PathBuf) {
-    create_dir_all(folder_path).expect("Failed to create dataset directory");
-    File::create(folder_path.join("ticks.npz")).expect("Failed to create ticks.npz");
-    let mut csv_file =
-        File::create(folder_path.join("sequences.csv")).expect("Failed to create sequences.csv");
-    writeln!(csv_file, "player,start,ticks,map").expect("Failed to write header to sequences.csv");
+/// keeps track of relevant meta-data to remain consistent even among batched export
+pub struct Exporter {
+    /// player_name -> (player_id, sequence_count)
+    pub players: HashMap<String, (usize, usize)>,
+
+    /// amount of registered players
+    pub player_count: usize,
+
+    /// total amount of sequences
+    pub sequence_count: usize,
+
+    /// path to target dataset folder
+    pub folder_path: PathBuf,
+
+    /// keeps writer to npz archive open
+    npz_writer: NpzWriter<File>,
 }
 
-/// Store the tick data of sequences in numpy npy files in a npz archive
-/// Also store meta data about these sequences in a .json file
-/// Initialize a dataset before using this function to add data to it!
-pub fn add_to_dataset(sequences: &[Sequence], folder_path: PathBuf) {
-    let tick_file = OpenOptions::new()
-        .write(true)
-        .append(true)
-        .open(folder_path.join("ticks.npz"))
-        .expect("Failed to open ticks.npz for appending");
-    let mut npz_write = NpzWriter::new(tick_file);
-
-    let mut csv_file = OpenOptions::new()
-        .write(true)
-        .append(true)
-        .open(folder_path.join("sequences.csv"))
-        .expect("Failed to open sequences.csv for appending");
-
-    for (i, seq) in sequences.iter().enumerate() {
-        npz_write
-            .add_array(i.to_string(), &seq.ticks_to_array2())
-            .expect("Failed to add array to .npz file");
-        let meta_csv = format!(
-            "{},{},{},{}",
-            seq.player_name, seq.start_tick, seq.tick_count, seq.map_name
-        );
-        writeln!(csv_file, "{}", meta_csv).expect("Failed to write to sequences.csv");
+impl Exporter {
+    /// initializes empty dataset and Exporter
+    pub fn new(folder_path: &PathBuf) -> Exporter {
+        let npz_writer = Exporter::initialize_dataset(folder_path);
+        Exporter {
+            players: HashMap::new(),
+            player_count: 0,
+            sequence_count: 0,
+            folder_path: folder_path.clone(),
+            npz_writer,
+        }
     }
 
-    // Finalize the .npz file
-    npz_write.finish().expect("Failed to finalize .npz file");
+    /// Initialze empty dataset, use add function to add (batches) of data to it
+    /// Returns NpzWriter used to write tick data to npz archive
+    fn initialize_dataset(folder_path: &PathBuf) -> NpzWriter<File> {
+        create_dir_all(folder_path).expect("Failed to create dataset directory");
+        File::create(folder_path.join("ticks.npz")).expect("Failed to create ticks.npz");
+        let mut csv_file = File::create(folder_path.join("sequences.csv"))
+            .expect("Failed to create sequences.csv");
+        writeln!(csv_file, "seq_id,player_id,player,start,ticks,map")
+            .expect("Failed to write header to sequences.csv");
+
+        let tick_file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(folder_path.join("ticks.npz"))
+            .expect("Failed to create ticks.npz");
+
+        NpzWriter::new(tick_file)
+    }
+
+    /// Store the tick data of sequences in numpy npy files in a npz archive
+    /// Also store meta data about these sequences in a .json file
+    /// Initialize a dataset before using this function to add data to it!
+    pub fn add_to_dataset(&mut self, sequences: &[Sequence]) {
+        let mut csv_file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(self.folder_path.join("sequences.csv"))
+            .expect("Failed to open sequences.csv for appending");
+
+        for (_, seq) in sequences.iter().enumerate() {
+            // add new entry if player name is seen for first time
+            if !self.players.contains_key(&seq.player_name) {
+                // use current player count as id for player
+                self.players
+                    .insert(seq.player_name.clone(), (self.player_count, 1));
+                self.player_count += 1;
+            }
+            let player = self.players.get_mut(&seq.player_name).unwrap();
+
+            // increment seq count for player
+            player.1 += 1;
+
+            self.npz_writer
+                .add_array(self.sequence_count.to_string(), &seq.ticks_to_array2())
+                .expect("Failed to add array to .npz file");
+            let meta_csv = format!(
+                "{},{},{},{},{},{}",
+                self.sequence_count,
+                player.0, // player_id
+                seq.player_name,
+                seq.start_tick,
+                seq.tick_count,
+                seq.map_name
+            );
+            writeln!(csv_file, "{}", meta_csv).expect("Failed to write to sequences.csv");
+
+            self.sequence_count += 1;
+        }
+    }
+
+    pub fn finalize(self) {
+        self.npz_writer
+            .finish()
+            .expect("Failed to finalize .npz file");
+    }
 }

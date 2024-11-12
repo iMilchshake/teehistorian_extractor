@@ -6,7 +6,7 @@ use plotlib::repr::Histogram;
 use plotlib::repr::HistogramBins;
 use plotlib::view::ContinuousView;
 use std::path::PathBuf;
-use teehistorian_extractor::export;
+use teehistorian_extractor::export::Exporter;
 use teehistorian_extractor::extractor::{Extractor, Sequence};
 use teehistorian_extractor::preprocess;
 use teehistorian_extractor::preprocess::Duration;
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // start with initializing output dataset, in case it fails
-    export::initialize_dataset(&args.output_folder);
+    let mut exporter = Exporter::new(&args.output_folder);
     assert!(
         args.output_folder.is_dir(),
         "Output path is not a directory"
@@ -129,7 +129,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{:15}: {:.1}h", player, ticks as f32 / (50. * 60. * 60.));
     }
 
-    export::add_to_dataset(&extracted_sequences, args.output_folder);
+    exporter.add_to_dataset(&extracted_sequences);
+
+    dbg!(&exporter.sequence_count);
+    dbg!(&exporter.player_count);
+    dbg!(&exporter.players);
+    dbg!(&exporter.folder_path);
+
+    exporter.finalize();
+
     info!("exported as tensor!");
 
     Ok(())
