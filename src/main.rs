@@ -8,7 +8,6 @@ use plotlib::view::ContinuousView;
 use std::path::PathBuf;
 use teehistorian_extractor::export::Exporter;
 use teehistorian_extractor::extractor::{Extractor, Sequence};
-use teehistorian_extractor::preprocess;
 use teehistorian_extractor::preprocess::Duration;
 
 fn plot(sequences: &[Sequence], title: &str) {
@@ -80,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // start with initializing output dataset, in case it fails
-    let mut exporter = Exporter::new(&args.output_folder);
+    let mut exporter = Exporter::new(&args.output_folder, args.min_ticks, 8);
     assert!(
         args.output_folder.is_dir(),
         "Output path is not a directory"
@@ -121,22 +120,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("extracted gameplay sequences:");
     log_sequence_info(&extracted_sequences);
 
-    for (player, seq_count) in preprocess::get_top_k_players(&extracted_sequences, 20, false) {
-        println!("{:15}: {}", player, seq_count,);
-    }
-
-    for (player, ticks) in preprocess::get_top_k_players(&extracted_sequences, 20, true) {
-        println!("{:15}: {:.1}h", player, ticks as f32 / (50. * 60. * 60.));
-    }
-
     exporter.add_to_dataset(&extracted_sequences);
 
     dbg!(&exporter.sequence_count);
     dbg!(&exporter.player_count);
     dbg!(&exporter.players);
-    dbg!(&exporter.folder_path);
-
-    exporter.finalize();
 
     info!("exported as tensor!");
 
