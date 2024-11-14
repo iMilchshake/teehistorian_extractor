@@ -43,7 +43,8 @@ impl Exporter {
         // initialize meta
         let mut meta_file = OpenOptions::new()
             .create(true)
-            .append(true)
+            .write(true)
+            .truncate(true)
             .open(folder_path.join("meta.csv"))
             .unwrap();
         writeln!(meta_file, "seq_id,player_id,player,start,ticks,map")
@@ -86,10 +87,10 @@ impl Exporter {
                 .assign(&sequence_ticks);
 
             let meta_csv = format!(
-                "{},{},{},{},{},{}",
+                "{},{},\"{}\",{},{},{}",
                 self.sequence_count,
-                player.0, // player_id
-                seq.player_name,
+                player.0,                          // player_id
+                seq.player_name.replace("\"", ""), // get rid of quotes for easer parsing
                 seq.start_tick,
                 seq.tick_count,
                 seq.map_name
