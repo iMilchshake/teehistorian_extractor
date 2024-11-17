@@ -81,7 +81,7 @@ impl Exporter {
             player.1 += 1;
 
             // add array2 representation of sequence
-            let sequence_ticks: Array2<i32> = seq.ticks_to_array2();
+            let sequence_ticks: Array2<i32> = seq.ticks_to_feature_array();
             tick_data
                 .index_axis_mut(ndarray::Axis(0), seq_index)
                 .assign(&sequence_ticks);

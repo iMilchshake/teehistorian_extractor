@@ -1,10 +1,12 @@
 use clap::Parser;
 use log::info;
 use log::LevelFilter;
+use log::{debug, warn};
 use plotlib::page::Page;
 use plotlib::repr::Histogram;
 use plotlib::repr::HistogramBins;
 use plotlib::view::ContinuousView;
+use std::fs;
 use std::path::PathBuf;
 use teehistorian_extractor::export::Exporter;
 use teehistorian_extractor::extractor::{Extractor, Sequence};
@@ -46,9 +48,9 @@ struct Cli {
     #[clap(short, long, default_value = "./data/out/dataset/")]
     output_folder: PathBuf,
 
-    /// Minimum ticks per sequence to include
+    /// ticks per sequence
     #[clap(short, long, default_value = "1000")]
-    min_ticks: usize,
+    seq_length: usize,
 
     /// Ticks of no movement that counts as player being AFK
     #[clap(short, long, default_value = "1000")]
@@ -71,6 +73,67 @@ struct Cli {
     cut_rescue: bool,
 }
 
+fn batched_export(args: &Cli) {
+    // start with initializing output dataset, in case it fails
+    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, 4);
+    assert!(
+        args.output_folder.is_dir(),
+        "Output path is not a directory"
+    );
+
+    // get all files
+    let paths: Vec<_> = fs::read_dir(&args.input)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .collect();
+    info!("found {} files to parse", paths.len());
+
+    // process all files in batches
+    let batch_size = 1000;
+    for batch in paths.chunks(batch_size) {
+        // parse batch -> DDNetSequences
+        let mut sequence_batch = Vec::new();
+        for path in batch {
+            let x = Extractor::get_ddnet_sequences(&path, args.cut_kill, args.cut_rescue);
+            sequence_batch.extend(x);
+        }
+        info!("extracted {} ddnet sequences", sequence_batch.len());
+
+        // Convert DDNetSequence -> Sequence
+        let mut sequences: Vec<Sequence> = Vec::new();
+        while let Some(ddnet_seq) = sequence_batch.pop() {
+            let sequence = Sequence::from_ddnet_sequence(&ddnet_seq);
+
+            if sequence.tick_count > args.seq_length {
+                sequences.push(sequence);
+            }
+        }
+        info!("converted to {} sequences", sequences.len());
+        log_sequence_info(&sequences);
+
+        // Clean sequences
+        let cleaned_sequences: Vec<Sequence> = sequences
+            .iter()
+            .flat_map(|sequence| {
+                let durations = Duration::get_non_afk_durations(sequence, args.afk_ticks);
+                let durations =
+                    Duration::pad_durations(durations, sequence.tick_count, args.afk_padding);
+                let durations: Vec<Duration> = durations
+                    .iter()
+                    .flat_map(|duration| duration.cut_duration(args.seq_length))
+                    .collect();
+                Duration::extract_sub_sequences(sequence, durations)
+            })
+            .collect();
+        info!("cleaned gameplay sequences:");
+        log_sequence_info(&cleaned_sequences);
+
+        // Export batch
+        exporter.add_to_dataset(&cleaned_sequences);
+        info!("exported batch");
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     colog::default_builder()
@@ -78,53 +141,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .target(env_logger::Target::Stdout)
         .init();
 
-    // start with initializing output dataset, in case it fails
-    let mut exporter = Exporter::new(&args.output_folder, args.min_ticks, 8);
-    assert!(
-        args.output_folder.is_dir(),
-        "Output path is not a directory"
-    );
+    batched_export(&args);
 
-    // parse ddnet sequences
-    let mut ddnet_sequences =
-        Extractor::get_all_ddnet_sequences(args.input, args.cut_kill, args.cut_rescue);
-    info!("extracted {} ddnet sequences", ddnet_sequences.len());
-
-    // convert to sequences
-    let mut sequences: Vec<Sequence> = Vec::new();
-    while let Some(ddnet_seq) = ddnet_sequences.pop() {
-        let sequence = Sequence::from_ddnet_sequence(&ddnet_seq);
-
-        if sequence.tick_count > args.min_ticks {
-            sequences.push(sequence);
-        }
-    }
-
-    info!("converted to {} sequences", sequences.len());
-    log_sequence_info(&sequences);
-
-    let extracted_sequences: Vec<Sequence> = sequences
-        .iter()
-        .flat_map(|sequence| {
-            let durations = Duration::get_non_afk_durations(sequence, args.afk_ticks);
-            let durations =
-                Duration::pad_durations(durations, sequence.tick_count, args.afk_padding);
-            let durations: Vec<Duration> = durations
-                .iter()
-                .flat_map(|duration| duration.cut_duration(args.min_ticks))
-                .collect();
-            Duration::extract_sub_sequences(sequence, durations)
-        })
-        .collect();
-
-    info!("extracted gameplay sequences:");
-    log_sequence_info(&extracted_sequences);
-
-    exporter.add_to_dataset(&extracted_sequences);
-
-    dbg!(&exporter.sequence_count);
-    dbg!(&exporter.player_count);
-    dbg!(&exporter.players);
+    // dbg!(&exporter.sequence_count);
+    // dbg!(&exporter.player_count);
+    // dbg!(&exporter.players);
 
     info!("exported as tensor!");
 

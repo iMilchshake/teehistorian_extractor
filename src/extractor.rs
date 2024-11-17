@@ -89,20 +89,23 @@ impl Sequence {
         )
     }
 
-    pub fn ticks_to_array2(&self) -> Array2<i32> {
+    pub fn ticks_to_feature_array(&self) -> Array2<i32> {
         let sequence_len = self.pos_x.len();
-        let mut data = Vec::with_capacity(sequence_len * 8);
+        let n_features = 4;
+        let mut data = Vec::with_capacity(sequence_len * n_features);
 
-        data.extend_from_slice(&self.pos_x);
-        data.extend_from_slice(&self.pos_y);
+        // data.extend_from_slice(&self.pos_x);
+        // data.extend_from_slice(&self.pos_y);
+        // data.extend_from_slice(&self.target_x);
+        // data.extend_from_slice(&self.target_y);
+
         data.extend_from_slice(&self.move_dir);
-        data.extend_from_slice(&self.target_x);
-        data.extend_from_slice(&self.target_y);
         data.extend(self.jump.iter().map(|&b| b as i32));
         data.extend(self.fire.iter().map(|&b| b as i32));
         data.extend(self.hook.iter().map(|&b| b as i32));
 
-        Array2::from_shape_vec((sequence_len, 8), data).expect("Shape should match data length")
+        Array2::from_shape_vec((sequence_len, n_features), data)
+            .expect("Shape should match data length")
     }
 }
 
@@ -125,18 +128,22 @@ impl Extractor {
                     file_index,
                     path.to_string_lossy()
                 );
-                sequences.extend(Self::get_ddnet_sequences(path, cut_kill, cut_rescue));
+                sequences.extend(Extractor::get_ddnet_sequences(&path, cut_kill, cut_rescue));
             }
         } else if path.is_file() {
             debug!("Parsing name={}", path.to_string_lossy());
-            sequences.extend(Self::get_ddnet_sequences(path, cut_kill, cut_rescue));
+            sequences.extend(Extractor::get_ddnet_sequences(&path, cut_kill, cut_rescue));
         }
 
         sequences
     }
 
     /// Extract ddnet sequences for a single teehistorian file
-    fn get_ddnet_sequences(path: PathBuf, cut_kill: bool, cut_rescue: bool) -> Vec<DDNetSequence> {
+    pub fn get_ddnet_sequences(
+        path: &PathBuf,
+        cut_kill: bool,
+        cut_rescue: bool,
+    ) -> Vec<DDNetSequence> {
         let f = File::open(&path).unwrap();
         let mut th = Th::parse(ThBufReader::new(f)).unwrap();
 
