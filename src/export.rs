@@ -1,7 +1,8 @@
 use crate::extractor::Sequence;
 
-use hdf5_metno as hdf5;
+use hdf5_metno::{self as hdf5, types::VarLenAscii};
 use ndarray::{Array2, Array3};
+use parquet::data_type::AsBytes;
 use std::{
     collections::HashMap,
     fs::{create_dir_all, File, OpenOptions},
@@ -22,14 +23,31 @@ pub struct Exporter {
 
     seq_length: usize,
     num_features: usize,
+    use_vel: bool,
+    use_rel_target: bool,
+
     seq_dataset: hdf5::Dataset,
     meta_file: File,
 }
 
 impl Exporter {
     /// Initialze empty dataset, use add function to add (batches) of data to it
-    pub fn new(folder_path: &PathBuf, seq_length: usize, num_features: usize) -> Exporter {
+    pub fn new(
+        folder_path: &PathBuf,
+        input_seq_length: usize,
+        use_vel: bool,
+        use_rel_target: bool,
+    ) -> Exporter {
         create_dir_all(folder_path).expect("Failed to create dataset directory");
+
+        let column_names = Exporter::get_column_names(use_vel, use_rel_target);
+        let num_features = column_names.len();
+        // if we use velocity, we need to cut off the last tick as velocity cant be calculated
+        let seq_length = if use_vel {
+            input_seq_length - 1
+        } else {
+            input_seq_length
+        };
 
         // initialize sequences hdf5 file
         let seq_file = hdf5::File::create(folder_path.join("sequences.h5"))
@@ -39,6 +57,19 @@ impl Exporter {
             .shape((hdf5::Extent::resizable(0), seq_length, num_features))
             .create("sequences")
             .expect("failed to create sequences.h5");
+
+        // add column named header attribute
+        let column_names_vla: Vec<VarLenAscii> = column_names
+            .iter()
+            .map(|s| VarLenAscii::from_ascii(s.as_bytes()).unwrap())
+            .collect();
+        let attr = seq_dataset
+            .new_attr::<VarLenAscii>()
+            .shape(column_names_vla.len())
+            .create("column_names")
+            .expect("Failed to create column_names attribute");
+        attr.write(&column_names_vla)
+            .expect("Failed to write column_names attribute");
 
         // initialize meta
         let mut meta_file = OpenOptions::new()
@@ -58,12 +89,71 @@ impl Exporter {
             meta_file,
             num_features,
             seq_length,
+            use_vel,
+            use_rel_target,
         }
     }
 
-    /// Store the tick data of sequences in numpy npy files in a npz archive
-    /// Also store meta data about these sequences in a .json file
-    /// Initialize a dataset before using this function to add data to it!
+    fn get_column_names(use_vel: bool, use_rel_target: bool) -> Vec<String> {
+        let mut column_names = vec![
+            "move_dir".to_string(),
+            "jump".to_string(),
+            "fire".to_string(),
+            "hook".to_string(),
+        ];
+
+        if use_vel {
+            column_names.push("vel_x".to_string());
+            column_names.push("vel_y".to_string());
+        }
+
+        if use_rel_target {
+            column_names.push("target_rel_x".to_string());
+            column_names.push("target_rel_y".to_string());
+        }
+
+        column_names
+    }
+
+    fn sequence_to_tick_array(&self, seq: &Sequence) -> Array2<i32> {
+        let mut data = Vec::new();
+        data.extend(seq.move_dir.iter().take(self.seq_length));
+        data.extend(seq.jump.iter().take(self.seq_length).map(|&b| b as i32));
+        data.extend(seq.fire.iter().take(self.seq_length).map(|&b| b as i32));
+        data.extend(seq.hook.iter().take(self.seq_length).map(|&b| b as i32));
+
+        if self.use_vel {
+            let vel_x: Vec<i32> = seq.pos_x.windows(2).map(|w| w[1] - w[0]).collect();
+            let vel_y: Vec<i32> = seq.pos_y.windows(2).map(|w| w[1] - w[0]).collect();
+            data.extend(&vel_x[..self.seq_length]);
+            data.extend(&vel_y[..self.seq_length]);
+        }
+
+        if self.use_rel_target {
+            data.extend(
+                seq.target_x
+                    .iter()
+                    .zip(&seq.pos_x)
+                    .take(self.seq_length)
+                    .map(|(&tx, &px)| tx - px),
+            );
+            data.extend(
+                seq.target_y
+                    .iter()
+                    .zip(&seq.pos_y)
+                    .take(self.seq_length)
+                    .map(|(&ty, &py)| ty - py),
+            );
+        }
+
+        assert!((data.len() % self.seq_length) == 0);
+        let n_features = data.len() / self.seq_length;
+        let data_array = Array2::from_shape_vec((self.seq_length, n_features), data)
+            .expect("Shape should match data length");
+
+        data_array
+    }
+
     pub fn add_to_dataset(&mut self, sequences: &[Sequence]) {
         let mut tick_data =
             Array3::<i32>::zeros((sequences.len(), self.seq_length, self.num_features));
@@ -80,12 +170,6 @@ impl Exporter {
             // increment seq count for player
             player.1 += 1;
 
-            // add array2 representation of sequence
-            let sequence_ticks: Array2<i32> = seq.ticks_to_feature_array();
-            tick_data
-                .index_axis_mut(ndarray::Axis(0), seq_index)
-                .assign(&sequence_ticks);
-
             let meta_csv = format!(
                 "{},{},\"{}\",{},{},{}",
                 self.sequence_count,
@@ -96,6 +180,12 @@ impl Exporter {
                 seq.map_name
             );
             writeln!(self.meta_file, "{}", meta_csv).expect("Failed to write to sequences.csv");
+
+            // add array2 representation of sequence
+            let sequence_ticks = self.sequence_to_tick_array(seq);
+            tick_data
+                .index_axis_mut(ndarray::Axis(0), seq_index)
+                .assign(&sequence_ticks);
 
             self.sequence_count += 1;
         }

@@ -2,31 +2,11 @@ use clap::Parser;
 use log::info;
 use log::LevelFilter;
 use log::{debug, warn};
-use plotlib::page::Page;
-use plotlib::repr::Histogram;
-use plotlib::repr::HistogramBins;
-use plotlib::view::ContinuousView;
 use std::fs;
 use std::path::PathBuf;
 use teehistorian_extractor::export::Exporter;
 use teehistorian_extractor::extractor::{Extractor, Sequence};
 use teehistorian_extractor::preprocess::Duration;
-
-fn plot(sequences: &[Sequence], title: &str) {
-    let tick_counts: Vec<f64> = sequences
-        .iter()
-        .map(|s| s.tick_count as f64)
-        .filter(|&ticks| ticks < 10000.0)
-        .collect();
-    let hist = Histogram::from_slice(&tick_counts, HistogramBins::Count(100));
-    let view = ContinuousView::new()
-        .add(hist)
-        .x_label("Tick Count")
-        .y_label("Frequency");
-    Page::single(&view)
-        .save(format!("histogram_{}.svg", title))
-        .expect("Failed to save plot");
-}
 
 fn log_sequence_info(sequences: &[Sequence]) {
     let total_ticks = sequences.iter().map(|s| s.tick_count).sum::<usize>();
@@ -75,7 +55,7 @@ struct Cli {
 
 fn batched_export(args: &Cli) {
     // start with initializing output dataset, in case it fails
-    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, 4);
+    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, true, true);
     assert!(
         args.output_folder.is_dir(),
         "Output path is not a directory"
@@ -140,14 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(args.log_level)
         .target(env_logger::Target::Stdout)
         .init();
-
     batched_export(&args);
-
-    // dbg!(&exporter.sequence_count);
-    // dbg!(&exporter.player_count);
-    // dbg!(&exporter.players);
-
-    info!("exported as tensor!");
-
+    info!("done");
     Ok(())
 }
