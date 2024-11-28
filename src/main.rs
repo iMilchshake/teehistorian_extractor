@@ -1,7 +1,6 @@
 use clap::Parser;
 use log::info;
 use log::LevelFilter;
-use log::{debug, warn};
 use std::fs;
 use std::path::PathBuf;
 use teehistorian_extractor::export::Exporter;
@@ -51,6 +50,10 @@ struct Cli {
     /// Cut sequence on player rescue (/r)
     #[clap(short = 'r', long)]
     cut_rescue: bool,
+
+    /// number of teehistorian files to process before saving to file
+    #[clap(short = 'b', long, default_value = "1000")]
+    file_chunk_size: usize,
 }
 
 fn batched_export(args: &Cli) {
@@ -66,14 +69,22 @@ fn batched_export(args: &Cli) {
         .unwrap()
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
-    info!("found {} files to parse", paths.len());
+    let file_count = paths.len();
+    let chunk_count = (file_count + args.file_chunk_size - 1) / args.file_chunk_size;
+    info!("found {} files to parse", file_count);
 
-    // process all files in batches
-    let batch_size = 1000;
-    for batch in paths.chunks(batch_size) {
+    // process all files in chunks
+    for (chunk_index, chunk) in paths.chunks(args.file_chunk_size).enumerate() {
+        info!(
+            "[{}/{}] parsing {} files",
+            chunk_index + 1,
+            chunk_count,
+            chunk.len()
+        );
+
         // parse batch -> DDNetSequences
         let mut sequence_batch = Vec::new();
-        for path in batch {
+        for path in chunk {
             let x = Extractor::get_ddnet_sequences(&path, args.cut_kill, args.cut_rescue);
             sequence_batch.extend(x);
         }
