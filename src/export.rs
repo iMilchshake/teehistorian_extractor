@@ -130,26 +130,16 @@ impl Exporter {
         }
 
         if self.use_rel_target {
-            data.extend(
-                seq.target_x
-                    .iter()
-                    .zip(&seq.pos_x)
-                    .take(self.seq_length)
-                    .map(|(&tx, &px)| tx - px),
-            );
-            data.extend(
-                seq.target_y
-                    .iter()
-                    .zip(&seq.pos_y)
-                    .take(self.seq_length)
-                    .map(|(&ty, &py)| ty - py),
-            );
+            data.extend(seq.target_x.iter().take(self.seq_length));
+            data.extend(seq.target_y.iter().take(self.seq_length));
         }
 
         assert!((data.len() % self.seq_length) == 0);
         let n_features = data.len() / self.seq_length;
-        let data_array = Array2::from_shape_vec((self.seq_length, n_features), data)
-            .expect("Shape should match data length");
+
+        let data_array = Array2::from_shape_vec((n_features, self.seq_length), data)
+            .expect("shape mismatch while converting sequence to ndarray")
+            .reversed_axes(); // transpose to (seq_length, n_features)
 
         data_array
     }
