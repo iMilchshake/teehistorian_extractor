@@ -1,6 +1,5 @@
 use crate::parser::{DDNetSequence, Parser};
 use log::{debug, error, warn};
-use ndarray::Array2;
 use serde::Serialize;
 use std::{
     fs::{self, File},

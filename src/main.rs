@@ -58,7 +58,7 @@ struct Cli {
 
 fn batched_export(args: &Cli) {
     // start with initializing output dataset, in case it fails
-    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, true, true);
+    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, true, true, true);
     assert!(
         args.output_folder.is_dir(),
         "Output path is not a directory"

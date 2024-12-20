@@ -2,7 +2,6 @@ use crate::extractor::Sequence;
 
 use hdf5_metno::{self as hdf5, types::VarLenAscii};
 use ndarray::{Array2, Array3};
-use parquet::data_type::AsBytes;
 use std::{
     collections::HashMap,
     fs::{create_dir_all, File, OpenOptions},
@@ -25,6 +24,7 @@ pub struct Exporter {
     num_features: usize,
     use_vel: bool,
     use_rel_target: bool,
+    use_aim_angle: bool,
 
     seq_dataset: hdf5::Dataset,
     meta_file: File,
@@ -37,10 +37,11 @@ impl Exporter {
         input_seq_length: usize,
         use_vel: bool,
         use_rel_target: bool,
+        use_aim_angle: bool,
     ) -> Exporter {
         create_dir_all(folder_path).expect("Failed to create dataset directory");
 
-        let column_names = Exporter::get_column_names(use_vel, use_rel_target);
+        let column_names = Exporter::get_column_names(use_vel, use_rel_target, use_aim_angle);
         let num_features = column_names.len();
         // if we use velocity, we need to cut off the last tick as velocity cant be calculated
         let seq_length = if use_vel {
@@ -91,10 +92,11 @@ impl Exporter {
             seq_length,
             use_vel,
             use_rel_target,
+            use_aim_angle,
         }
     }
 
-    fn get_column_names(use_vel: bool, use_rel_target: bool) -> Vec<String> {
+    fn get_column_names(use_vel: bool, use_rel_target: bool, use_aim_angle: bool) -> Vec<String> {
         let mut column_names = vec![
             "move_dir".to_string(),
             "jump".to_string(),
@@ -110,6 +112,10 @@ impl Exporter {
         if use_rel_target {
             column_names.push("target_rel_x".to_string());
             column_names.push("target_rel_y".to_string());
+        }
+
+        if use_aim_angle {
+            column_names.push("aim_angle".to_string());
         }
 
         column_names
@@ -132,6 +138,16 @@ impl Exporter {
         if self.use_rel_target {
             data.extend(seq.target_x.iter().take(self.seq_length));
             data.extend(seq.target_y.iter().take(self.seq_length));
+        }
+
+        if self.use_aim_angle {
+            data.extend(
+                seq.target_x
+                    .iter()
+                    .zip(seq.target_y.iter())
+                    .take(self.seq_length)
+                    .map(|(&x, &y)| (y as f64).atan2(x as f64).round_ties_even() as i32),
+            );
         }
 
         assert!((data.len() % self.seq_length) == 0);
