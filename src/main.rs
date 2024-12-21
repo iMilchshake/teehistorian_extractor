@@ -108,7 +108,7 @@ fn batched_export(args: &Cli) {
             .flat_map(|sequence| {
                 let durations = Duration::get_non_afk_durations(sequence, args.afk_ticks);
                 let durations =
-                    Duration::pad_durations(durations, sequence.tick_count, args.afk_padding);
+                    Duration::pad_durations(durations, sequence.tick_count - 1, args.afk_padding);
                 let durations: Vec<Duration> = durations
                     .iter()
                     .flat_map(|duration| duration.cut_duration(args.seq_length))
