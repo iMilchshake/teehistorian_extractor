@@ -25,6 +25,7 @@ pub struct Exporter {
     use_vel: bool,
     use_rel_target: bool,
     use_aim_angle: bool,
+    use_aim_distance: bool,
 
     seq_dataset: hdf5::Dataset,
     meta_file: File,
@@ -38,10 +39,12 @@ impl Exporter {
         use_vel: bool,
         use_rel_target: bool,
         use_aim_angle: bool,
+        use_aim_distance: bool,
     ) -> Exporter {
         create_dir_all(folder_path).expect("Failed to create dataset directory");
 
-        let column_names = Exporter::get_column_names(use_vel, use_rel_target, use_aim_angle);
+        let column_names =
+            Exporter::get_column_names(use_vel, use_rel_target, use_aim_angle, use_aim_distance);
         let num_features = column_names.len();
         // if we use velocity, we need to cut off the last tick as velocity cant be calculated
         let seq_length = if use_vel {
@@ -93,10 +96,16 @@ impl Exporter {
             use_vel,
             use_rel_target,
             use_aim_angle,
+            use_aim_distance,
         }
     }
 
-    fn get_column_names(use_vel: bool, use_rel_target: bool, use_aim_angle: bool) -> Vec<String> {
+    fn get_column_names(
+        use_vel: bool,
+        use_rel_target: bool,
+        use_aim_angle: bool,
+        use_aim_distance: bool,
+    ) -> Vec<String> {
         let mut column_names = vec![
             "move_dir".to_string(),
             "jump".to_string(),
@@ -116,6 +125,10 @@ impl Exporter {
 
         if use_aim_angle {
             column_names.push("aim_angle".to_string());
+        }
+
+        if use_aim_distance {
+            column_names.push("aim_distance".to_string());
         }
 
         column_names
@@ -146,7 +159,19 @@ impl Exporter {
                     .iter()
                     .zip(seq.target_y.iter())
                     .take(self.seq_length)
-                    .map(|(&x, &y)| (y as f64).atan2(x as f64).round_ties_even() as i32),
+                    .map(|(&x, &y)| {
+                        (y as f64).atan2(x as f64).to_degrees().round_ties_even() as i32
+                    }),
+            );
+        }
+
+        if self.use_aim_distance {
+            data.extend(
+                seq.target_x
+                    .iter()
+                    .zip(seq.target_y.iter())
+                    .take(self.seq_length)
+                    .map(|(&x, &y)| ((x.pow(2) + y.pow(2)) as f64).sqrt().round_ties_even() as i32),
             );
         }
 

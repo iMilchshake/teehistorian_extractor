@@ -54,21 +54,26 @@ struct Cli {
     /// number of teehistorian files to process before saving to file
     #[clap(short = 'b', long, default_value = "1000")]
     file_chunk_size: usize,
+
+    /// number of teehistorian files to process before saving to file
+    #[clap(short = 'm', long, default_value = "2000")]
+    max_files: usize,
 }
 
 fn batched_export(args: &Cli) {
     // start with initializing output dataset, in case it fails
-    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, true, true, true);
+    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, true, true, true, true);
     assert!(
         args.output_folder.is_dir(),
         "Output path is not a directory"
     );
 
     // get all files
-    let paths: Vec<_> = fs::read_dir(&args.input)
+    let mut paths: Vec<_> = fs::read_dir(&args.input)
         .unwrap()
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
+    paths.truncate(args.max_files);
     let file_count = paths.len();
     let chunk_count = (file_count + args.file_chunk_size - 1) / args.file_chunk_size;
     info!("found {} files to parse", file_count);
