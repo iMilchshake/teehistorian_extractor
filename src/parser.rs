@@ -1,4 +1,4 @@
-use core::str;
+use core::{panic, str};
 use derivative::Derivative;
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
@@ -155,7 +155,7 @@ impl Parser {
             Chunk::InputNew(inp_new) => self.handle_input_new(inp_new),
             Chunk::InputDiff(inp_diff) => self.handle_input_diff(inp_diff),
             Chunk::NetMessage(net_msg) => self.handle_net_message(net_msg)?,
-            Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff),
+            Chunk::PlayerDiff(player_diff) => self.handle_player_diff(player_diff)?,
             Chunk::Eos => self.handle_eos()?,
             Chunk::ConsoleCommand(command) => self.handle_console_command(command)?,
             Chunk::PlayerOld(player) => self.handle_player_old(player)?,
@@ -272,10 +272,28 @@ impl Parser {
         self.current_tick.add_init_position(player_new);
     }
 
-    fn handle_player_diff(&mut self, player_diff: PlayerDiff) {
+    fn handle_player_diff(&mut self, player_diff: PlayerDiff) -> Result<(), ParseError> {
         self.check_implicit_tick(player_diff.cid);
+        if player_diff.dx > 500 || player_diff.dy > 500 {
+            let seq_start_tick = self
+                .active_sequences
+                .get(&player_diff.cid)
+                .unwrap()
+                .start_tick;
+
+            // high player diffs can occur on kill/rescue outside of sequences, which are just
+            // ignored as we make sure to skip these ticks on kill/rescue. However, here we
+            // check that we are currently in an active sequence, so we do not expect such high
+            // player diffs. Most likely this is due to teleporters on maps.
+            if self.tick_index >= seq_start_tick {
+                self.complete_active_sequence(player_diff.cid, false)?;
+            }
+        }
+
         trace!("T={} {:?}", self.tick_index, &player_diff);
         self.current_tick.apply_position_diff(player_diff);
+
+        Ok(())
     }
 
     fn complete_active_sequence(&mut self, cid: i32, drop_player: bool) -> Result<(), ParseError> {
@@ -296,8 +314,10 @@ impl Parser {
         if drop_player {
             self.current_tick.remove_player_position(cid);
         } else {
+            // we skip the start of following ddnet sequence by two ticks, as kill and position
+            // reset (PlayerDiff) are sometimes over more than one tick..
             self.active_sequences
-                .insert(cid, DDNetSequence::new(cid, self.tick_index + 1));
+                .insert(cid, DDNetSequence::new(cid, self.tick_index + 2));
             debug!(
                 "T={} initialized new sequence for cid={}, start_tick={}",
                 self.tick_index,
@@ -313,6 +333,7 @@ impl Parser {
         }
 
         sequence.end_tick = Some(self.tick_index);
+
         sequence.player_name = Some(self.player_names.get(&cid).unwrap().clone());
         sequence.map_name = self.game_info.as_ref().map(|g| g.map_name.clone());
 
@@ -343,6 +364,21 @@ impl Parser {
                         .expect("No player position found for cid"),
                 );
             });
+
+        // sanity check that no high velocities make it into final sequence
+        let max_vel_x = sequence
+            .player_positions
+            .windows(2)
+            .map(|w| w[1].0 - w[0].0)
+            .max()
+            .unwrap();
+        let max_vel_y = sequence
+            .player_positions
+            .windows(2)
+            .map(|w| w[1].1 - w[0].1)
+            .max()
+            .unwrap();
+        assert!(max_vel_y < 500 && max_vel_x < 500);
 
         if sequence.input_vectors.len() < 3 {
             return Ok(());
