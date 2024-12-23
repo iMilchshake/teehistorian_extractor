@@ -1,4 +1,4 @@
-use crate::parser::{DDNetSequence, Parser};
+use crate::parser::{DDNetSequence, Parser, ParserConfig};
 use log::{debug, error, warn};
 use serde::Serialize;
 use std::{
@@ -93,11 +93,7 @@ pub struct Extractor;
 impl Extractor {
     /// Extract all sequences of all teehistorian files in the provided path.
     /// Can either be a folder or an individual teehistorian file.
-    pub fn get_all_ddnet_sequences(
-        path: PathBuf,
-        cut_kill: bool,
-        cut_rescue: bool,
-    ) -> Vec<DDNetSequence> {
+    pub fn get_all_ddnet_sequences(path: PathBuf, config: &ParserConfig) -> Vec<DDNetSequence> {
         let mut sequences: Vec<DDNetSequence> = Vec::new();
 
         if path.is_dir() {
@@ -108,22 +104,18 @@ impl Extractor {
                     file_index,
                     path.to_string_lossy()
                 );
-                sequences.extend(Extractor::get_ddnet_sequences(&path, cut_kill, cut_rescue));
+                sequences.extend(Extractor::get_ddnet_sequences(&path, config));
             }
         } else if path.is_file() {
             debug!("Parsing name={}", path.to_string_lossy());
-            sequences.extend(Extractor::get_ddnet_sequences(&path, cut_kill, cut_rescue));
+            sequences.extend(Extractor::get_ddnet_sequences(&path, config));
         }
 
         sequences
     }
 
     /// Extract ddnet sequences for a single teehistorian file
-    pub fn get_ddnet_sequences(
-        path: &PathBuf,
-        cut_kill: bool,
-        cut_rescue: bool,
-    ) -> Vec<DDNetSequence> {
+    pub fn get_ddnet_sequences(path: &PathBuf, config: &ParserConfig) -> Vec<DDNetSequence> {
         let f = File::open(&path).unwrap();
         let mut th = Th::parse(ThBufReader::new(f)).unwrap();
 
@@ -134,10 +126,12 @@ impl Extractor {
             return Vec::new();
         }
 
-        let mut parser = Parser::new(cut_kill, cut_rescue);
+        let mut parser = Parser::new(config.clone());
         parser.parse_header(header_bytes.unwrap());
         while let Ok(chunk) = th.next_chunk() {
             let parse_status = parser.parse_chunk(chunk);
+
+            // halli witom wie geht es dir heute ?
 
             if let Err(err) = parse_status {
                 warn!(

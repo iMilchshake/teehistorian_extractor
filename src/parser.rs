@@ -1,4 +1,4 @@
-use core::{panic, str};
+use core::str;
 use derivative::Derivative;
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
@@ -85,6 +85,29 @@ impl DDNetSequence {
     }
 }
 
+#[derive(Clone)]
+pub struct ParserConfig {
+    /// on player kill the current sequence is completed and a new one started
+    cut_kill: bool,
+
+    /// on player rescue the current sequence is completed and a new one started
+    cut_rescue: bool,
+
+    /// maximum allowed speed for x and y individually. If this threshold is exceeded, it is
+    /// considered unexpected movement and results in completed/new sequence (e.g. teleport)
+    max_speed: i32,
+}
+
+impl ParserConfig {
+    pub fn new(cut_kill: bool, cut_rescue: bool, max_speed: i32) -> ParserConfig {
+        ParserConfig {
+            cut_kill,
+            cut_rescue,
+            max_speed,
+        }
+    }
+}
+
 /// tracks state while parsing teehistorian file
 pub struct Parser {
     /// if end of stream (EOS) chunk has already been parsed
@@ -117,12 +140,11 @@ pub struct Parser {
     // game info such as map name
     game_info: Option<GameInfo>,
 
-    cut_kill: bool,
-    cut_rescue: bool,
+    config: ParserConfig,
 }
 
 impl Parser {
-    pub fn new(cut_kill: bool, cut_rescue: bool) -> Parser {
+    pub fn new(config: ParserConfig) -> Parser {
         Parser {
             finished: false,
             tick_index: 0,
@@ -134,8 +156,7 @@ impl Parser {
             completed_sequences: Vec::new(),
             player_names: HashMap::new(),
             game_info: None,
-            cut_kill,
-            cut_rescue,
+            config,
         }
     }
 
@@ -238,7 +259,7 @@ impl Parser {
             }
             net_msg::ClNetMessage::ClKill => {
                 debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);
-                if self.cut_kill {
+                if self.config.cut_kill {
                     self.complete_active_sequence(net_msg.cid, false)?;
                 }
             }
@@ -274,7 +295,9 @@ impl Parser {
 
     fn handle_player_diff(&mut self, player_diff: PlayerDiff) -> Result<(), ParseError> {
         self.check_implicit_tick(player_diff.cid);
-        if player_diff.dx > 500 || player_diff.dy > 500 {
+        if player_diff.dx.abs() > self.config.max_speed
+            || player_diff.dy.abs() > self.config.max_speed
+        {
             let seq_start_tick = self
                 .active_sequences
                 .get(&player_diff.cid)
@@ -371,14 +394,19 @@ impl Parser {
             .windows(2)
             .map(|w| w[1].0 - w[0].0)
             .max()
-            .unwrap();
+            .unwrap_or(0);
         let max_vel_y = sequence
             .player_positions
             .windows(2)
             .map(|w| w[1].1 - w[0].1)
             .max()
-            .unwrap();
-        assert!(max_vel_y < 500 && max_vel_x < 500);
+            .unwrap_or(0);
+        assert!(
+            max_vel_y.abs() <= self.config.max_speed && max_vel_x.abs() <= self.config.max_speed,
+            "max vel exceeded -> ({:},{:})",
+            max_vel_x,
+            max_vel_y
+        );
 
         if sequence.input_vectors.len() < 3 {
             return Ok(());
@@ -437,7 +465,7 @@ impl Parser {
         );
 
         // handle rescue
-        if self.cut_rescue && cmd == "r" {
+        if self.config.cut_rescue && cmd == "r" {
             self.complete_active_sequence(command.cid, false)?;
         }
 

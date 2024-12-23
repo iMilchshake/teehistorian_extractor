@@ -3,8 +3,10 @@ use log::info;
 use log::LevelFilter;
 use std::fs;
 use std::path::PathBuf;
+use teehistorian_extractor::export::ExportConfig;
 use teehistorian_extractor::export::Exporter;
 use teehistorian_extractor::extractor::{Extractor, Sequence};
+use teehistorian_extractor::parser::ParserConfig;
 use teehistorian_extractor::preprocess::Duration;
 
 fn log_sequence_info(sequences: &[Sequence]) {
@@ -32,10 +34,10 @@ struct Cli {
     seq_length: usize,
 
     /// Ticks of no movement that counts as player being AFK
-    #[clap(short, long, default_value = "1000")]
+    #[clap(short, long, default_value = "500")]
     afk_ticks: usize,
 
-    /// Ticks of padding around afk durations
+    /// Ticks of padding around durations, after afk removal
     #[clap(short = 'p', long, default_value = "15")]
     afk_padding: usize,
 
@@ -56,17 +58,26 @@ struct Cli {
     file_chunk_size: usize,
 
     /// number of teehistorian files to process before saving to file
-    #[clap(short = 'm', long, default_value = "2000")]
+    #[clap(long, default_value = "2000")]
     max_files: usize,
+
+    #[clap(long, default_value = "100")]
+    max_speed: i32,
+
+    #[clap(long, default_value = "1000")]
+    max_aim_distance: i32,
 }
 
 fn batched_export(args: &Cli) {
     // start with initializing output dataset, in case it fails
-    let mut exporter = Exporter::new(&args.output_folder, args.seq_length, true, true, true, true);
     assert!(
         args.output_folder.is_dir(),
         "Output path is not a directory"
     );
+
+    let parser_config = ParserConfig::new(args.cut_kill, args.cut_rescue, args.max_speed);
+    let export_config = ExportConfig::new(args.seq_length, true, false, true, true);
+    let mut exporter = Exporter::new(&args.output_folder, export_config);
 
     // get all files
     let mut paths: Vec<_> = fs::read_dir(&args.input)
@@ -90,7 +101,7 @@ fn batched_export(args: &Cli) {
         // parse batch -> DDNetSequences
         let mut sequence_batch = Vec::new();
         for path in chunk {
-            let x = Extractor::get_ddnet_sequences(&path, args.cut_kill, args.cut_rescue);
+            let x = Extractor::get_ddnet_sequences(&path, &parser_config);
             sequence_batch.extend(x);
         }
         info!("extracted {} ddnet sequences", sequence_batch.len());

@@ -9,6 +9,40 @@ use std::{
     path::PathBuf,
 };
 
+fn bool_to_unit_f32(b: bool) -> f32 {
+    if b {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+pub struct ExportConfig {
+    seq_length: usize,
+    use_vel: bool,
+    use_rel_target: bool,
+    use_aim_angle: bool,
+    use_aim_distance: bool,
+}
+
+impl ExportConfig {
+    pub fn new(
+        input_seq_length: usize,
+        use_vel: bool,
+        use_rel_target: bool,
+        use_aim_angle: bool,
+        use_aim_distance: bool,
+    ) -> ExportConfig {
+        ExportConfig {
+            seq_length: input_seq_length,
+            use_vel,
+            use_rel_target,
+            use_aim_angle,
+            use_aim_distance,
+        }
+    }
+}
+
 /// keeps track of relevant meta-data to remain consistent even among batched export
 pub struct Exporter {
     /// player_name -> (player_id, sequence_count)
@@ -20,45 +54,39 @@ pub struct Exporter {
     /// total amount of sequences
     pub sequence_count: usize,
 
-    seq_length: usize,
     num_features: usize,
-    use_vel: bool,
-    use_rel_target: bool,
-    use_aim_angle: bool,
-    use_aim_distance: bool,
 
     seq_dataset: hdf5::Dataset,
     meta_file: File,
+
+    config: ExportConfig,
 }
 
 impl Exporter {
     /// Initialze empty dataset, use add function to add (batches) of data to it
-    pub fn new(
-        folder_path: &PathBuf,
-        input_seq_length: usize,
-        use_vel: bool,
-        use_rel_target: bool,
-        use_aim_angle: bool,
-        use_aim_distance: bool,
-    ) -> Exporter {
+    pub fn new(folder_path: &PathBuf, config: ExportConfig) -> Exporter {
         create_dir_all(folder_path).expect("Failed to create dataset directory");
 
-        let column_names =
-            Exporter::get_column_names(use_vel, use_rel_target, use_aim_angle, use_aim_distance);
+        let column_names = Exporter::get_column_names(
+            config.use_vel,
+            config.use_rel_target,
+            config.use_aim_angle,
+            config.use_aim_distance,
+        );
         let num_features = column_names.len();
+
         // if we use velocity, we need to cut off the last tick as velocity cant be calculated
-        let seq_length = if use_vel {
-            input_seq_length - 1
-        } else {
-            input_seq_length
-        };
+        let mut config = config;
+        if config.use_vel {
+            config.seq_length -= 1;
+        }
 
         // initialize sequences hdf5 file
         let seq_file = hdf5::File::create(folder_path.join("sequences.h5"))
             .expect("Failed to create sequences.h5");
         let seq_dataset = seq_file
-            .new_dataset::<i32>()
-            .shape((hdf5::Extent::resizable(0), seq_length, num_features))
+            .new_dataset::<f32>()
+            .shape((hdf5::Extent::resizable(0), config.seq_length, num_features))
             .create("sequences")
             .expect("failed to create sequences.h5");
 
@@ -92,11 +120,7 @@ impl Exporter {
             seq_dataset,
             meta_file,
             num_features,
-            seq_length,
-            use_vel,
-            use_rel_target,
-            use_aim_angle,
-            use_aim_distance,
+            config,
         }
     }
 
@@ -134,51 +158,79 @@ impl Exporter {
         column_names
     }
 
-    fn sequence_to_tick_array(&self, seq: &Sequence) -> Array2<i32> {
+    fn sequence_to_tick_array(&self, seq: &Sequence) -> Array2<f32> {
         let mut data = Vec::new();
-        data.extend(seq.move_dir.iter().take(self.seq_length));
-        data.extend(seq.jump.iter().take(self.seq_length).map(|&b| b as i32));
-        data.extend(seq.fire.iter().take(self.seq_length).map(|&b| b as i32));
-        data.extend(seq.hook.iter().take(self.seq_length).map(|&b| b as i32));
+        data.extend(
+            seq.move_dir
+                .iter()
+                .take(self.config.seq_length)
+                .map(|&i| i as f32),
+        );
+        data.extend(
+            seq.jump
+                .iter()
+                .take(self.config.seq_length)
+                .map(|&b| bool_to_unit_f32(b)),
+        );
+        data.extend(
+            seq.fire
+                .iter()
+                .take(self.config.seq_length)
+                .map(|&b| bool_to_unit_f32(b)),
+        );
+        data.extend(
+            seq.hook
+                .iter()
+                .take(self.config.seq_length)
+                .map(|&b| bool_to_unit_f32(b)),
+        );
 
-        if self.use_vel {
-            let vel_x: Vec<i32> = seq.pos_x.windows(2).map(|w| w[1] - w[0]).collect();
-            let vel_y: Vec<i32> = seq.pos_y.windows(2).map(|w| w[1] - w[0]).collect();
-            data.extend(&vel_x[..self.seq_length]);
-            data.extend(&vel_y[..self.seq_length]);
+        if self.config.use_vel {
+            let vel_x: Vec<f32> = seq.pos_x.windows(2).map(|w| (w[1] - w[0]) as f32).collect();
+            let vel_y: Vec<f32> = seq.pos_y.windows(2).map(|w| (w[1] - w[0]) as f32).collect();
+            data.extend(&vel_x[..self.config.seq_length]);
+            data.extend(&vel_y[..self.config.seq_length]);
         }
 
-        if self.use_rel_target {
-            data.extend(seq.target_x.iter().take(self.seq_length));
-            data.extend(seq.target_y.iter().take(self.seq_length));
+        if self.config.use_rel_target {
+            data.extend(
+                seq.target_x
+                    .iter()
+                    .take(self.config.seq_length)
+                    .map(|&i| i as f32),
+            );
+            data.extend(
+                seq.target_y
+                    .iter()
+                    .take(self.config.seq_length)
+                    .map(|&i| i as f32),
+            );
         }
 
-        if self.use_aim_angle {
+        if self.config.use_aim_angle {
             data.extend(
                 seq.target_x
                     .iter()
                     .zip(seq.target_y.iter())
-                    .take(self.seq_length)
-                    .map(|(&x, &y)| {
-                        (y as f64).atan2(x as f64).to_degrees().round_ties_even() as i32
-                    }),
+                    .take(self.config.seq_length)
+                    .map(|(&x, &y)| (y as f32).atan2(x as f32).to_degrees()),
             );
         }
 
-        if self.use_aim_distance {
+        if self.config.use_aim_distance {
             data.extend(
                 seq.target_x
                     .iter()
                     .zip(seq.target_y.iter())
-                    .take(self.seq_length)
-                    .map(|(&x, &y)| ((x.pow(2) + y.pow(2)) as f64).sqrt().round_ties_even() as i32),
+                    .take(self.config.seq_length)
+                    .map(|(&x, &y)| ((x.pow(2) + y.pow(2)) as f32).sqrt()),
             );
         }
 
-        assert!((data.len() % self.seq_length) == 0);
-        let n_features = data.len() / self.seq_length;
+        assert!((data.len() % self.config.seq_length) == 0);
+        let n_features = data.len() / self.config.seq_length;
 
-        let data_array = Array2::from_shape_vec((n_features, self.seq_length), data)
+        let data_array = Array2::from_shape_vec((n_features, self.config.seq_length), data)
             .expect("shape mismatch while converting sequence to ndarray")
             .reversed_axes(); // transpose to (seq_length, n_features)
 
@@ -187,7 +239,7 @@ impl Exporter {
 
     pub fn add_to_dataset(&mut self, sequences: &[Sequence]) {
         let mut tick_data =
-            Array3::<i32>::zeros((sequences.len(), self.seq_length, self.num_features));
+            Array3::<f32>::zeros((sequences.len(), self.config.seq_length, self.num_features));
         for (seq_index, seq) in sequences.iter().enumerate() {
             // add new entry if player name is seen for first time
             if !self.players.contains_key(&seq.player_name) {
@@ -226,7 +278,7 @@ impl Exporter {
         let new_size = current_size + tick_data.shape()[0];
         dbg!(current_size, new_size);
         self.seq_dataset
-            .resize((new_size, self.seq_length, self.num_features))
+            .resize((new_size, self.config.seq_length, self.num_features))
             .expect("Failed to resize dataset");
         self.seq_dataset
             .write_slice(&tick_data.view(), (current_size..new_size, .., ..))
