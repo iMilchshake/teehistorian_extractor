@@ -3,6 +3,7 @@ use log::warn;
 use crate::extractor::Sequence;
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct Duration {
     start: usize,
     end: usize,
@@ -26,7 +27,7 @@ impl Duration {
         let mut durations = Vec::with_capacity(sequence_count);
 
         for idx in 0..sequence_count {
-            let start = target_length * idx;
+            let start = self.start + (target_length * idx);
             durations.push(Duration::new(start, start + target_length - 1));
         }
 
