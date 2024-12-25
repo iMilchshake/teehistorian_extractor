@@ -9,6 +9,8 @@ use std::{
     path::PathBuf,
 };
 
+const MAX_AIM_DISTANCE: f32 = 1000.0;
+
 fn bool_to_unit_f32(b: bool) -> f32 {
     if b {
         1.0
@@ -223,7 +225,7 @@ impl Exporter {
                     .iter()
                     .zip(seq.target_y.iter())
                     .take(self.config.seq_length)
-                    .map(|(&x, &y)| ((x.pow(2) + y.pow(2)) as f32).sqrt()),
+                    .map(|(&x, &y)| ((x.pow(2) + y.pow(2)) as f32).sqrt().min(MAX_AIM_DISTANCE)),
             );
         }
 
