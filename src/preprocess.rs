@@ -12,7 +12,7 @@ pub struct Duration {
 impl Duration {
     pub fn new(start: usize, end: usize) -> Duration {
         if start >= end {
-            warn!("start >= end!");
+            warn!("start >= end! {}>={}", start, end);
         }
         Duration { start, end }
     }
@@ -82,8 +82,12 @@ impl Duration {
         let mut last_move_tick: Option<usize> = None;
         let mut durations: Vec<Duration> = Vec::new();
 
-        for (current_tick, &move_dir) in sequence.move_dir.iter().enumerate() {
-            let player_moved = move_dir != 0;
+        for current_tick in 0..sequence.move_dir.len() {
+            let player_moved = if current_tick == 0 {
+                false
+            } else {
+                sequence.move_dir[current_tick] != sequence.move_dir[current_tick - 1]
+            };
 
             if player_moved {
                 last_move_tick = Some(current_tick);
