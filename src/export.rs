@@ -271,8 +271,8 @@ impl Exporter {
             let meta_csv = format!(
                 "{},{},\"{}\",{},{},{},{}",
                 self.sequence_count,
-                player.0,                          // player_id
-                seq.player_name.replace("\"", ""), // get rid of quotes for easer parsing
+                player.0, // player_id
+                seq.player_name,
                 seq.start_tick,
                 seq.tick_count,
                 seq.map_name,
@@ -354,22 +354,23 @@ impl Exporter {
         self.add_to_dataset(&cleaned_sequences);
     }
 
-    pub fn print_summary(&self) {
-        info!(
-            "unique players: {} {}",
-            self.player_count,
-            self.players.len()
-        );
+    pub fn print_summary(&self, k: usize) {
+        info!("unique players: {}", self.players.len());
 
-        let k = 20;
-        let mut players_sorted: Vec<_> = self.players.iter().collect();
-        players_sorted.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+        let mut players: Vec<_> = self.players.iter().collect();
+        players.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
 
-        players_sorted
+        for (name, (id, count)) in players.iter().take(k) {
+            println!("Name: {}, ID: {}, Count: {}", name, id, count);
+        }
+
+        let top_names = players
             .iter()
             .take(k)
-            .for_each(|(name, (id, count))| {
-                println!("Name: {}, ID: {}, Count: {}", name, id, count);
-            });
+            .map(|(name, _)| name.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        println!("top-k names: '{}'", top_names);
     }
 }

@@ -258,8 +258,15 @@ impl Parser {
         match res.unwrap() {
             net_msg::ClNetMessage::ClStartInfo(info) => {
                 let player_name = String::from_utf8_lossy(info.name).to_string();
-                debug!("StartInfo cid={} => name={}", net_msg.cid, player_name);
-                self.player_names.insert(net_msg.cid, player_name);
+                let cleaned_name = player_name
+                    .chars()
+                    .filter(|c| *c != '"' && *c != '\'') // remove quotation marks
+                    .collect::<String>()
+                    .replace("(1)", "") // remove leading (1)
+                    .trim()
+                    .to_string();
+                debug!("StartInfo cid={} => name={}", net_msg.cid, cleaned_name);
+                self.player_names.insert(net_msg.cid, cleaned_name);
             }
             net_msg::ClNetMessage::ClKill => {
                 debug!("tick={} cid={} KILL", self.tick_index, net_msg.cid);

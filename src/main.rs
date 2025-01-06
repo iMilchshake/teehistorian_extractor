@@ -57,6 +57,10 @@ struct Cli {
 
     #[clap(short = 'd', long)]
     dry_run: bool,
+
+    /// after export, give summary of players with top k amount of sequences
+    #[clap(short, long)]
+    print_top_k: Option<usize>,
 }
 
 fn batched_export(args: &Cli) {
@@ -94,7 +98,7 @@ fn batched_export(args: &Cli) {
         exporter.handle_batch(batch_paths, &parser_config, &export_config);
     }
 
-    exporter.print_summary();
+    exporter.print_summary(args.print_top_k.unwrap_or(10));
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
