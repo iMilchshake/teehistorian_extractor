@@ -5,19 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use teehistorian_extractor::export::ExportConfig;
 use teehistorian_extractor::export::Exporter;
-use teehistorian_extractor::extractor::{Extractor, Sequence};
 use teehistorian_extractor::parser::ParserConfig;
-use teehistorian_extractor::preprocess::Duration;
-
-fn log_sequence_info(sequences: &[Sequence]) {
-    let total_ticks = sequences.iter().map(|s| s.tick_count).sum::<usize>();
-    info!(
-        "sequences={}, ticks={} => {:.1} hours of gameplay",
-        sequences.len(),
-        total_ticks,
-        (total_ticks as f32 / (50. * 60. * 60.))
-    );
-}
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -66,18 +54,24 @@ struct Cli {
 
     #[clap(long, default_value = "1000")]
     max_aim_distance: i32,
+
+    #[clap(short = 'd', long)]
+    dry_run: bool,
 }
 
 fn batched_export(args: &Cli) {
-    // start with initializing output dataset, in case it fails
-    assert!(
-        args.output_folder.is_dir(),
-        "Output path is not a directory"
-    );
-
     let parser_config = ParserConfig::new(args.cut_kill, args.cut_rescue, args.max_speed);
-    let export_config = ExportConfig::new(args.seq_length, true, false, true, true);
-    let mut exporter = Exporter::new(&args.output_folder, export_config);
+    let export_config = ExportConfig {
+        seq_length: args.seq_length,
+        afk_ticks: args.afk_ticks,
+        afk_padding: args.afk_padding,
+        dry_run: args.dry_run,
+        use_vel: true,
+        use_rel_target: false,
+        use_aim_angle: true,
+        use_aim_distance: true,
+    };
+    let mut exporter = Exporter::new(&args.output_folder, export_config.clone());
 
     // get all files
     let mut paths: Vec<_> = fs::read_dir(&args.input)
@@ -86,59 +80,21 @@ fn batched_export(args: &Cli) {
         .collect();
     paths.truncate(args.max_files);
     let file_count = paths.len();
-    let chunk_count = (file_count + args.file_chunk_size - 1) / args.file_chunk_size;
+    let batch_count = (file_count + args.file_chunk_size - 1) / args.file_chunk_size;
     info!("found {} files to parse", file_count);
 
-    // process all files in chunks
-    for (chunk_index, chunk) in paths.chunks(args.file_chunk_size).enumerate() {
+    // process all files in batches
+    for (batch_index, batch_paths) in paths.chunks(args.file_chunk_size).enumerate() {
         info!(
             "[{}/{}] parsing {} files",
-            chunk_index + 1,
-            chunk_count,
-            chunk.len()
+            batch_index + 1,
+            batch_count,
+            batch_paths.len()
         );
-
-        // parse batch -> DDNetSequences
-        let mut sequence_batch = Vec::new();
-        for path in chunk {
-            let x = Extractor::get_ddnet_sequences(&path, &parser_config);
-            sequence_batch.extend(x);
-        }
-        info!("extracted {} ddnet sequences", sequence_batch.len());
-
-        // Convert DDNetSequence -> Sequence
-        let mut sequences: Vec<Sequence> = Vec::new();
-        while let Some(ddnet_seq) = sequence_batch.pop() {
-            let sequence = Sequence::from_ddnet_sequence(&ddnet_seq);
-
-            if sequence.tick_count > args.seq_length {
-                sequences.push(sequence);
-            }
-        }
-        info!("converted to {} sequences", sequences.len());
-        log_sequence_info(&sequences);
-
-        // Clean sequences
-        let cleaned_sequences: Vec<Sequence> = sequences
-            .iter()
-            .flat_map(|sequence| {
-                let durations = Duration::get_non_afk_durations(sequence, args.afk_ticks);
-                let durations =
-                    Duration::pad_durations(durations, sequence.tick_count - 1, args.afk_padding);
-                let durations: Vec<Duration> = durations
-                    .iter()
-                    .flat_map(|duration| duration.cut_duration(args.seq_length))
-                    .collect();
-                Duration::extract_sub_sequences(sequence, durations)
-            })
-            .collect();
-        info!("cleaned gameplay sequences:");
-        log_sequence_info(&cleaned_sequences);
-
-        // Export batch
-        exporter.add_to_dataset(&cleaned_sequences);
-        info!("exported batch");
+        exporter.handle_batch(batch_paths, &parser_config, &export_config);
     }
+
+    exporter.print_summary();
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

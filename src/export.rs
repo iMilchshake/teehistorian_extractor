@@ -1,6 +1,5 @@
-use crate::extractor::Sequence;
-
 use hdf5_metno::{self as hdf5, types::VarLenAscii};
+use log::info;
 use ndarray::{Array2, Array3};
 use std::{
     collections::HashMap,
@@ -8,6 +7,10 @@ use std::{
     io::Write,
     path::PathBuf,
 };
+
+use crate::extractor::{Extractor, Sequence};
+use crate::parser::ParserConfig;
+use crate::preprocess::Duration;
 
 const MAX_AIM_DISTANCE: f32 = 1000.0;
 
@@ -19,30 +22,26 @@ fn bool_to_unit_f32(b: bool) -> f32 {
     }
 }
 
-pub struct ExportConfig {
-    seq_length: usize,
-    use_vel: bool,
-    use_rel_target: bool,
-    use_aim_angle: bool,
-    use_aim_distance: bool,
+fn log_sequence_info(sequences: &[Sequence]) {
+    let total_ticks = sequences.iter().map(|s| s.tick_count).sum::<usize>();
+    info!(
+        "sequences={}, ticks={} => {:.1} hours of gameplay",
+        sequences.len(),
+        total_ticks,
+        (total_ticks as f32 / (50. * 60. * 60.))
+    );
 }
 
-impl ExportConfig {
-    pub fn new(
-        input_seq_length: usize,
-        use_vel: bool,
-        use_rel_target: bool,
-        use_aim_angle: bool,
-        use_aim_distance: bool,
-    ) -> ExportConfig {
-        ExportConfig {
-            seq_length: input_seq_length,
-            use_vel,
-            use_rel_target,
-            use_aim_angle,
-            use_aim_distance,
-        }
-    }
+#[derive(Clone)]
+pub struct ExportConfig {
+    pub seq_length: usize,
+    pub afk_ticks: usize,
+    pub afk_padding: usize,
+    pub use_vel: bool,
+    pub use_rel_target: bool,
+    pub use_aim_angle: bool,
+    pub use_aim_distance: bool,
+    pub dry_run: bool,
 }
 
 /// keeps track of relevant meta-data to remain consistent even among batched export
@@ -58,8 +57,8 @@ pub struct Exporter {
 
     num_features: usize,
 
-    seq_dataset: hdf5::Dataset,
-    meta_file: File,
+    seq_dataset: Option<hdf5::Dataset>,
+    meta_file: Option<File>,
 
     config: ExportConfig,
 }
@@ -67,8 +66,6 @@ pub struct Exporter {
 impl Exporter {
     /// Initialze empty dataset, use add function to add (batches) of data to it
     pub fn new(folder_path: &PathBuf, config: ExportConfig) -> Exporter {
-        create_dir_all(folder_path).expect("Failed to create dataset directory");
-
         let column_names = Exporter::get_column_names(
             config.use_vel,
             config.use_rel_target,
@@ -78,42 +75,52 @@ impl Exporter {
         let num_features = column_names.len();
 
         // if we use velocity, we need to cut off the last tick as velocity cant be calculated
+        // TODO: this approach is kind of stupid
         let mut config = config;
         if config.use_vel {
             config.seq_length -= 1;
         }
 
-        // initialize sequences hdf5 file
-        let seq_file = hdf5::File::create(folder_path.join("sequences.h5"))
-            .expect("Failed to create sequences.h5");
-        let seq_dataset = seq_file
-            .new_dataset::<f32>()
-            .shape((hdf5::Extent::resizable(0), config.seq_length, num_features))
-            .create("sequences")
-            .expect("failed to create sequences.h5");
+        let (seq_dataset, meta_file) = if !config.dry_run {
+            assert!(folder_path.is_dir(), "Output path is not a directory");
+            create_dir_all(folder_path).expect("Failed to create dataset directory");
 
-        // add column named header attribute
-        let column_names_vla: Vec<VarLenAscii> = column_names
-            .iter()
-            .map(|s| VarLenAscii::from_ascii(s.as_bytes()).unwrap())
-            .collect();
-        let attr = seq_dataset
-            .new_attr::<VarLenAscii>()
-            .shape(column_names_vla.len())
-            .create("column_names")
-            .expect("Failed to create column_names attribute");
-        attr.write(&column_names_vla)
-            .expect("Failed to write column_names attribute");
+            // initialize sequences hdf5 file
+            let seq_file = hdf5::File::create(folder_path.join("sequences.h5"))
+                .expect("Failed to create sequences.h5");
+            let seq_dataset = seq_file
+                .new_dataset::<f32>()
+                .shape((hdf5::Extent::resizable(0), config.seq_length, num_features))
+                .create("sequences")
+                .expect("failed to create sequences.h5");
 
-        // initialize meta
-        let mut meta_file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(folder_path.join("meta.csv"))
-            .unwrap();
-        writeln!(meta_file, "seq_id,player_id,player,start,ticks,map,teehist")
-            .expect("Failed to write header to meta.csv");
+            // add column named header attribute
+            let column_names_vla: Vec<VarLenAscii> = column_names
+                .iter()
+                .map(|s| VarLenAscii::from_ascii(s.as_bytes()).unwrap())
+                .collect();
+            let attr = seq_dataset
+                .new_attr::<VarLenAscii>()
+                .shape(column_names_vla.len())
+                .create("column_names")
+                .expect("Failed to create column_names attribute");
+            attr.write(&column_names_vla)
+                .expect("Failed to write column_names attribute");
+
+            // initialize meta
+            let mut meta_file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(folder_path.join("meta.csv"))
+                .unwrap();
+            writeln!(meta_file, "seq_id,player_id,player,start,ticks,map,teehist")
+                .expect("Failed to write header to meta.csv");
+
+            (Some(seq_dataset), Some(meta_file))
+        } else {
+            (None, None)
+        };
 
         Exporter {
             players: HashMap::new(),
@@ -252,8 +259,14 @@ impl Exporter {
             }
             let player = self.players.get_mut(&seq.player_name).unwrap();
 
-            // increment seq count for player
+            // increment seq counts (for player and global)
             player.1 += 1;
+            self.sequence_count += 1;
+
+            // we want to count the players, but dont actually save anything, so we skip here
+            if self.config.dry_run {
+                continue;
+            }
 
             let meta_csv = format!(
                 "{},{},\"{}\",{},{},{},{}",
@@ -265,26 +278,98 @@ impl Exporter {
                 seq.map_name,
                 seq.teehist_name
             );
-            writeln!(self.meta_file, "{}", meta_csv).expect("Failed to write to sequences.csv");
+            writeln!(self.meta_file.as_ref().unwrap(), "{}", meta_csv)
+                .expect("Failed to write to sequences.csv");
 
             // add array2 representation of sequence
             let sequence_ticks = self.sequence_to_tick_array(seq);
             tick_data
                 .index_axis_mut(ndarray::Axis(0), seq_index)
                 .assign(&sequence_ticks);
+        }
 
-            self.sequence_count += 1;
+        if self.config.dry_run {
+            return;
         }
 
         // Append ALL sequence ticks to seq_dataset
-        let current_size = self.seq_dataset.shape()[0];
+        let seq_dataset = self.seq_dataset.as_ref().unwrap();
+        let current_size = seq_dataset.shape()[0];
         let new_size = current_size + tick_data.shape()[0];
-        dbg!(current_size, new_size);
-        self.seq_dataset
+        seq_dataset
             .resize((new_size, self.config.seq_length, self.num_features))
             .expect("Failed to resize dataset");
-        self.seq_dataset
+        seq_dataset
             .write_slice(&tick_data.view(), (current_size..new_size, .., ..))
             .expect("Failed to write data");
+    }
+
+    /// parse and export a batch of paths
+    pub fn handle_batch(
+        &mut self,
+        batch_paths: &[PathBuf],
+        parser_config: &ParserConfig,
+        export_config: &ExportConfig,
+    ) {
+        // parse batch -> DDNetSequences
+        let mut sequence_batch = Vec::new();
+        for path in batch_paths {
+            let x = Extractor::get_ddnet_sequences(&path, &parser_config);
+            sequence_batch.extend(x);
+        }
+        info!("extracted {} ddnet sequences", sequence_batch.len());
+
+        // Convert DDNetSequence -> Sequence
+        let mut sequences: Vec<Sequence> = Vec::new();
+        while let Some(ddnet_seq) = sequence_batch.pop() {
+            let sequence = Sequence::from_ddnet_sequence(&ddnet_seq);
+
+            if sequence.tick_count > export_config.seq_length {
+                sequences.push(sequence);
+            }
+        }
+        info!("converted to {} sequences", sequences.len());
+        log_sequence_info(&sequences);
+
+        // Clean sequences
+        let cleaned_sequences: Vec<Sequence> = sequences
+            .iter()
+            .flat_map(|sequence| {
+                let durations = Duration::get_non_afk_durations(sequence, export_config.afk_ticks);
+                let durations = Duration::pad_durations(
+                    durations,
+                    sequence.tick_count - 1,
+                    export_config.afk_padding,
+                );
+                let durations: Vec<Duration> = durations
+                    .iter()
+                    .flat_map(|duration| duration.cut_duration(export_config.seq_length))
+                    .collect();
+                Duration::extract_sub_sequences(sequence, durations)
+            })
+            .collect();
+        info!("cleaned gameplay sequences:");
+        log_sequence_info(&cleaned_sequences);
+
+        self.add_to_dataset(&cleaned_sequences);
+    }
+
+    pub fn print_summary(&self) {
+        info!(
+            "unique players: {} {}",
+            self.player_count,
+            self.players.len()
+        );
+
+        let k = 20;
+        let mut players_sorted: Vec<_> = self.players.iter().collect();
+        players_sorted.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+
+        players_sorted
+            .iter()
+            .take(k)
+            .for_each(|(name, (id, count))| {
+                println!("Name: {}, ID: {}, Count: {}", name, id, count);
+            });
     }
 }
