@@ -15,6 +15,7 @@ pub struct Sequence {
     pub tick_count: usize,
     pub player_name: String,
     pub map_name: String,
+    pub teehist_name: String,
 
     // tick data
     pub pos_x: Vec<i32>,
@@ -39,6 +40,7 @@ impl Sequence {
         assert!(tick_count == ddnet_sequence.input_vectors.len());
         assert!(tick_count == ddnet_sequence.player_positions.len());
         assert!(ddnet_sequence.player_name.is_some());
+        assert!(ddnet_sequence.teehist_path.is_some());
 
         // prepare vecs for all tick data
         let mut pos_x = Vec::with_capacity(tick_count);
@@ -78,15 +80,16 @@ impl Sequence {
             hook,
             player_name: ddnet_sequence.player_name.clone().unwrap(),
             map_name: ddnet_sequence.map_name.clone().unwrap(),
+            teehist_name: ddnet_sequence.teehist_path.clone().unwrap(),
         }
     }
 
-    pub fn meta_to_csv(&self) -> String {
-        format!(
-            "{},{},{},{}",
-            self.tick_count, self.player_name, self.start_tick, self.map_name
-        )
-    }
+    // pub fn meta_to_csv(&self) -> String {
+    //     format!(
+    //         "{},{},{},{},{}",
+    //         self.tick_count, self.player_name, self.start_tick, self.map_name, self.teehist_name
+    //     )
+    // }
 }
 
 pub struct Extractor;
@@ -131,8 +134,6 @@ impl Extractor {
         while let Ok(chunk) = th.next_chunk() {
             let parse_status = parser.parse_chunk(chunk);
 
-            // halli witom wie geht es dir heute ?
-
             if let Err(err) = parse_status {
                 warn!(
                     "path={:?}\nerror={:}\nrecovering {:} completed sequences.",
@@ -142,6 +143,13 @@ impl Extractor {
                 );
                 break;
             }
+        }
+
+        // add teehistorian file name to all extracted sequences
+        for ddnet_seq in parser.completed_sequences.iter_mut() {
+            ddnet_seq.teehist_path = path
+                .file_stem()
+                .and_then(|s| s.to_str().map(|str_val| str_val.to_string()));
         }
 
         parser.completed_sequences

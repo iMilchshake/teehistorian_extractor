@@ -142,6 +142,7 @@ impl Duration {
                 hook: sequence.hook[duration.start..=duration.end].to_vec(),
                 player_name: sequence.player_name.clone(),
                 map_name: sequence.map_name.clone(),
+                teehist_name: sequence.teehist_name.clone(),
             };
 
             sub_sequences.push(sub_sequence);

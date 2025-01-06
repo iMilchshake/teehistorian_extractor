@@ -69,6 +69,9 @@ pub struct DDNetSequence {
     #[derivative(Debug = "ignore")]
     pub player_positions: Vec<(i32, i32)>,
     pub map_name: Option<String>,
+
+    /// path / name of the teehistorian file this ddnet sequence origins from
+    pub teehist_path: Option<String>,
 }
 
 impl DDNetSequence {
@@ -81,6 +84,7 @@ impl DDNetSequence {
             input_vectors: Vec::new(),
             player_positions: Vec::new(),
             map_name: None,
+            teehist_path: None,
         }
     }
 }

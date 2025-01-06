@@ -112,7 +112,7 @@ impl Exporter {
             .truncate(true)
             .open(folder_path.join("meta.csv"))
             .unwrap();
-        writeln!(meta_file, "seq_id,player_id,player,start,ticks,map")
+        writeln!(meta_file, "seq_id,player_id,player,start,ticks,map,teehist")
             .expect("Failed to write header to meta.csv");
 
         Exporter {
@@ -256,13 +256,14 @@ impl Exporter {
             player.1 += 1;
 
             let meta_csv = format!(
-                "{},{},\"{}\",{},{},{}",
+                "{},{},\"{}\",{},{},{},{}",
                 self.sequence_count,
                 player.0,                          // player_id
                 seq.player_name.replace("\"", ""), // get rid of quotes for easer parsing
                 seq.start_tick,
                 seq.tick_count,
-                seq.map_name
+                seq.map_name,
+                seq.teehist_name
             );
             writeln!(self.meta_file, "{}", meta_csv).expect("Failed to write to sequences.csv");
 
