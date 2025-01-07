@@ -61,10 +61,19 @@ struct Cli {
     /// after export, give summary of players with top k amount of sequences
     #[clap(short = 'p', long)]
     print_top_k: Option<usize>,
+
+    /// csv list of player names to include. All others will be filtered out.
+    #[clap(short = 'f', long, value_delimiter = ',')]
+    filter_players: Option<Vec<String>>,
 }
 
 fn batched_export(args: &Cli) {
-    let parser_config = ParserConfig::new(args.cut_kill, args.cut_rescue, args.max_speed);
+    let parser_config = ParserConfig::new(
+        args.cut_kill,
+        args.cut_rescue,
+        args.max_speed,
+        args.filter_players.clone(),
+    );
     let export_config = ExportConfig {
         seq_length: args.seq_length,
         afk_ticks: args.afk_ticks,

@@ -123,7 +123,6 @@ impl Extractor {
         let mut th = Th::parse(ThBufReader::new(f)).unwrap();
 
         let header_bytes = th.header();
-
         if header_bytes.is_err() {
             error!("coulnt parse header of file {:?}", path);
             return Vec::new();

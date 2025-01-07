@@ -100,14 +100,23 @@ pub struct ParserConfig {
     /// maximum allowed speed for x and y individually. If this threshold is exceeded, it is
     /// considered unexpected movement and results in completed/new sequence (e.g. teleport)
     max_speed: i32,
+
+    /// vec of exclusive player names, filter out all players that are NOT in this vec!
+    filter_players: Option<Vec<String>>,
 }
 
 impl ParserConfig {
-    pub fn new(cut_kill: bool, cut_rescue: bool, max_speed: i32) -> ParserConfig {
+    pub fn new(
+        cut_kill: bool,
+        cut_rescue: bool,
+        max_speed: i32,
+        filter_players: Option<Vec<String>>,
+    ) -> ParserConfig {
         ParserConfig {
             cut_kill,
             cut_rescue,
             max_speed,
+            filter_players,
         }
     }
 }
@@ -370,6 +379,13 @@ impl Parser {
 
         sequence.player_name = Some(self.player_names.get(&cid).unwrap().clone());
         sequence.map_name = self.game_info.as_ref().map(|g| g.map_name.clone());
+
+        // if filter_players is defined and player_name not included, we skip this sequence
+        if let Some(filter_players) = &self.config.filter_players {
+            if !filter_players.contains(sequence.player_name.as_ref().unwrap()) {
+                return Ok(());
+            }
+        }
 
         self.previous_ticks
             .iter()

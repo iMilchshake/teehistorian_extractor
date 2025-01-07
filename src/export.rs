@@ -259,14 +259,8 @@ impl Exporter {
             }
             let player = self.players.get_mut(&seq.player_name).unwrap();
 
-            // increment seq counts (for player and global)
+            // increment player seq counts
             player.1 += 1;
-            self.sequence_count += 1;
-
-            // we want to count the players, but dont actually save anything, so we skip here
-            if self.config.dry_run {
-                continue;
-            }
 
             let meta_csv = format!(
                 "{},{},\"{}\",{},{},{},{}",
@@ -278,6 +272,13 @@ impl Exporter {
                 seq.map_name,
                 seq.teehist_name
             );
+
+            self.sequence_count += 1;
+
+            // we want to count the players, but dont actually save anything, so we skip here
+            if self.config.dry_run {
+                continue;
+            }
             writeln!(self.meta_file.as_ref().unwrap(), "{}", meta_csv)
                 .expect("Failed to write to sequences.csv");
 
