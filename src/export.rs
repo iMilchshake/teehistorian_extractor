@@ -360,8 +360,9 @@ impl Exporter {
         let mut players: Vec<_> = self.players.iter().collect();
         players.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
 
+        info!("Top {} Players:", k);
         for (name, (id, count)) in players.iter().take(k) {
-            println!("Name: {}, ID: {}, Count: {}", name, id, count);
+            info!("Name: {}, ID: {}, Count: {}", name, id, count);
         }
 
         let top_names = players
@@ -371,6 +372,6 @@ impl Exporter {
             .collect::<Vec<_>>()
             .join(",");
 
-        println!("top-k names: '{}'", top_names);
+        info!("top-k names: '{}'", top_names);
     }
 }

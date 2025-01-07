@@ -26,7 +26,7 @@ struct Cli {
     afk_ticks: usize,
 
     /// Ticks of padding around durations, after afk removal
-    #[clap(short = 'p', long, default_value = "15")]
+    #[clap(long = "ap", default_value = "15")]
     afk_padding: usize,
 
     /// Logging level (error, warn, info, debug, trace)
@@ -59,7 +59,7 @@ struct Cli {
     dry_run: bool,
 
     /// after export, give summary of players with top k amount of sequences
-    #[clap(short, long)]
+    #[clap(short = 'p', long)]
     print_top_k: Option<usize>,
 }
 
@@ -103,6 +103,7 @@ fn batched_export(args: &Cli) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
+    dbg!(&args);
     colog::default_builder()
         .filter_level(args.log_level)
         .target(env_logger::Target::Stdout)
