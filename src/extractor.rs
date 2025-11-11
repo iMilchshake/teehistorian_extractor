@@ -126,16 +126,24 @@ impl Extractor {
     /// Extract ddnet sequences for a single teehistorian file
     pub fn get_ddnet_sequences(path: &PathBuf, config: &ParserConfig) -> Vec<DDNetSequence> {
         let f = File::open(&path).unwrap();
-        let mut th = Th::parse(ThBufReader::new(f)).unwrap();
+        let th = match Th::parse(ThBufReader::new(f)) {
+            Ok(th) => th,
+            Err(_) => {
+                error!("couldn't parse teehistorian file {:?}", path);
+                return Vec::new();
+            }
+        };
 
-        let header_bytes = th.header();
-        if header_bytes.is_err() {
-            error!("coulnt parse header of file {:?}", path);
-            return Vec::new();
-        }
+        let header_bytes = match th.header() {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                error!("couldn't parse header of file {:?}", path);
+                return Vec::new();
+            }
+        };
 
         let mut parser = Parser::new(config.clone());
-        parser.parse_header(header_bytes.unwrap());
+        parser.parse_header(header_bytes);
         while let Ok(chunk) = th.next_chunk() {
             let parse_status = parser.parse_chunk(chunk);
 
