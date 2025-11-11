@@ -69,6 +69,7 @@ pub struct DDNetSequence {
     #[derivative(Debug = "ignore")]
     pub player_positions: Vec<(i32, i32)>,
     pub map_name: Option<String>,
+    pub timeout_code: Option<String>,
 
     /// path / name of the teehistorian file this ddnet sequence origins from
     pub teehist_path: Option<String>,
@@ -85,6 +86,7 @@ impl DDNetSequence {
             player_positions: Vec::new(),
             map_name: None,
             teehist_path: None,
+            timeout_code: None,
         }
     }
 }
@@ -359,8 +361,12 @@ impl Parser {
         } else {
             // we skip the start of following ddnet sequence by two ticks, as kill and position
             // reset (PlayerDiff) are sometimes over more than one tick..
-            self.active_sequences
-                .insert(cid, DDNetSequence::new(cid, self.tick_index + 2));
+            let mut new_seq = DDNetSequence::new(cid, self.tick_index + 2);
+
+            // if a timeout code is known, copy to new sequence as /timeout is only sent once
+            new_seq.timeout_code = sequence.timeout_code.clone();
+
+            self.active_sequences.insert(cid, new_seq);
             debug!(
                 "T={} initialized new sequence for cid={}, start_tick={}",
                 self.tick_index,
@@ -494,6 +500,17 @@ impl Parser {
         // handle rescue
         if self.config.cut_rescue && cmd == "r" {
             self.complete_active_sequence(command.cid, false)?;
+        }
+
+        // handle timeout
+        if cmd == "timeout" {
+            if let Some(timeout_code) = args.get(0) {
+                if let Some(seq) = self.active_sequences.get_mut(&command.cid) {
+                    seq.timeout_code = Some(timeout_code.to_owned());
+                } else {
+                    warn!("/timeout for unknown CID");
+                }
+            }
         }
 
         Ok(())

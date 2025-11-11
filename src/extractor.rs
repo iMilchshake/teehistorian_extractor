@@ -14,6 +14,7 @@ pub struct Sequence {
     pub start_tick: usize,
     pub tick_count: usize,
     pub player_name: String,
+    pub timeout_code: String,
     pub map_name: String,
     pub teehist_name: String,
 
@@ -29,12 +30,16 @@ pub struct Sequence {
 }
 
 impl Sequence {
-    pub fn from_ddnet_sequence(ddnet_sequence: &DDNetSequence) -> Sequence {
+    pub fn from_ddnet_sequence(ddnet_sequence: &DDNetSequence) -> Option<Sequence> {
         let start_tick = ddnet_sequence.start_tick as usize;
         let end_tick = ddnet_sequence
             .end_tick
             .expect("ddnet sequence has no end tick") as usize;
         let tick_count = end_tick - start_tick;
+
+        if ddnet_sequence.timeout_code.is_none() {
+            return None;
+        }
 
         // Sanity checks
         assert!(tick_count == ddnet_sequence.input_vectors.len());
@@ -67,7 +72,7 @@ impl Sequence {
             hook.push(input_vector[5] == 1);
         }
 
-        Sequence {
+        Some(Sequence {
             start_tick,
             tick_count,
             pos_x,
@@ -81,7 +86,8 @@ impl Sequence {
             player_name: ddnet_sequence.player_name.clone().unwrap(),
             map_name: ddnet_sequence.map_name.clone().unwrap(),
             teehist_name: ddnet_sequence.teehist_path.clone().unwrap(),
-        }
+            timeout_code: ddnet_sequence.timeout_code.clone().unwrap(),
+        })
     }
 
     // pub fn meta_to_csv(&self) -> String {

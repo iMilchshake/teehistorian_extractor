@@ -143,6 +143,7 @@ impl Duration {
                 player_name: sequence.player_name.clone(),
                 map_name: sequence.map_name.clone(),
                 teehist_name: sequence.teehist_name.clone(),
+                timeout_code: sequence.timeout_code.clone(),
             };
 
             sub_sequences.push(sub_sequence);
