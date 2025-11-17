@@ -1,14 +1,14 @@
 use hdf5_metno::{self as hdf5, types::VarLenAscii};
 use log::info;
 use ndarray::{Array2, Array3};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{
     fs::{create_dir_all, File, OpenOptions},
     io::Write,
     path::PathBuf,
 };
 
-use crate::extractor::{Extractor, Sequence};
+use crate::extractor::{ConversionResult, Extractor, Sequence};
 use crate::parser::ParserConfig;
 use crate::preprocess::Duration;
 
@@ -376,6 +376,8 @@ impl Exporter {
         let mut sequences: Vec<Sequence> = Vec::new();
         let mut min_count_fail = 0;
         let mut missing_timeout_code_fail = 0;
+        let mut invalid_name_fail = 0;
+        let mut dropped_names = HashSet::new();
         while let Some(ddnet_seq) = sequence_batch.pop() {
             let tick_count = (ddnet_seq.end_tick.unwrap() - ddnet_seq.start_tick) as usize;
 
@@ -385,14 +387,26 @@ impl Exporter {
             }
 
             // try to convert
-            if let Some(sequence) = Sequence::from_ddnet_sequence(&ddnet_seq) {
-                sequences.push(sequence);
-            } else {
-                missing_timeout_code_fail += 1;
+            match Sequence::from_ddnet_sequence(&ddnet_seq) {
+                ConversionResult::Ok(sequence) => {
+                    sequences.push(sequence);
+                }
+                ConversionResult::MissingTimeout => {
+                    missing_timeout_code_fail += 1;
+                }
+                ConversionResult::InvalidName(name) => {
+                    invalid_name_fail += 1;
+                    dropped_names.insert(name);
+                }
             }
         }
         info!("converted to {} sequences", sequences.len());
-        dbg!(min_count_fail, missing_timeout_code_fail);
+        dbg!(min_count_fail, missing_timeout_code_fail, invalid_name_fail);
+        info!(
+            "Dropped {} unique invalid names: {:?}",
+            dropped_names.len(),
+            dropped_names
+        );
         log_sequence_info(&sequences);
 
         // Clean sequences

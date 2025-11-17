@@ -29,8 +29,14 @@ pub struct Sequence {
     pub hook: Vec<bool>,
 }
 
+pub enum ConversionResult {
+    Ok(Sequence),
+    MissingTimeout,
+    InvalidName(String),
+}
+
 impl Sequence {
-    pub fn from_ddnet_sequence(ddnet_sequence: &DDNetSequence) -> Option<Sequence> {
+    pub fn from_ddnet_sequence(ddnet_sequence: &DDNetSequence) -> ConversionResult {
         let start_tick = ddnet_sequence.start_tick as usize;
         let end_tick = ddnet_sequence
             .end_tick
@@ -38,7 +44,16 @@ impl Sequence {
         let tick_count = end_tick - start_tick;
 
         if ddnet_sequence.timeout_code.is_none() {
-            return None;
+            return ConversionResult::MissingTimeout;
+        }
+
+        // Validate player name
+        let player_name = ddnet_sequence.player_name.as_ref().unwrap();
+        if player_name.eq_ignore_ascii_case("nameless tee")
+            || player_name.len() <= 1
+            || player_name.starts_with("[D]")
+        {
+            return ConversionResult::InvalidName(player_name.clone());
         }
 
         // Sanity checks
@@ -72,7 +87,7 @@ impl Sequence {
             hook.push(input_vector[5] == 1);
         }
 
-        Some(Sequence {
+        ConversionResult::Ok(Sequence {
             start_tick,
             tick_count,
             pos_x,
@@ -126,7 +141,7 @@ impl Extractor {
     /// Extract ddnet sequences for a single teehistorian file
     pub fn get_ddnet_sequences(path: &PathBuf, config: &ParserConfig) -> Vec<DDNetSequence> {
         let f = File::open(&path).unwrap();
-        let th = match Th::parse(ThBufReader::new(f)) {
+        let mut th = match Th::parse(ThBufReader::new(f)) {
             Ok(th) => th,
             Err(_) => {
                 error!("couldn't parse teehistorian file {:?}", path);
