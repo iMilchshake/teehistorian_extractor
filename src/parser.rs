@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::collections::HashMap;
 use teehistorian::chunks::{
-    chunk, ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
+    ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
 };
 use teehistorian::Chunk;
 use twgame_core::net_msg::{self, Team};
@@ -215,7 +215,10 @@ impl Parser {
                         if e.get() != &new_player_name {
                             warn!(
                                 "T={} ignored rename for cid={} from {:?} to {}",
-                                self.tick_index, name.cid, e.get(), new_player_name
+                                self.tick_index,
+                                name.cid,
+                                e.get(),
+                                new_player_name
                             );
                         }
                     }
@@ -283,13 +286,25 @@ impl Parser {
     }
 
     fn handle_net_message(&mut self, net_msg: NetMessage) -> Result<(), ParseError> {
-        let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::V06).ok();
+        let res = net_msg::parse_net_msg(&net_msg.msg, &mut net_msg::NetVersion::Unknown);
 
-        if res.is_none() {
-            return Err(ParseError::NetMsgParseError());
-        }
+        let parsed_msg = match res {
+            Ok(msg) => msg,
+            Err(err) => {
+                let error_type = match err {
+                    net_msg::Error::NonClientGameMsg06(_) => "NonClientGameMsg06",
+                    net_msg::Error::NonClientGameMsg07(_) => "NonClientGameMsg07",
+                    net_msg::Error::NetMsgParseError(_) => "NetMsgParseError",
+                };
+                debug!(
+                    "Skipping unparseable netmsg (error_type={}): {:?}",
+                    error_type, net_msg.msg
+                );
+                return Ok(());
+            }
+        };
 
-        match res.unwrap() {
+        match parsed_msg {
             net_msg::ClNetMessage::ClStartInfo(info) => {
                 let player_name = String::from_utf8_lossy(info.name).to_string();
                 let cleaned_name = player_name
