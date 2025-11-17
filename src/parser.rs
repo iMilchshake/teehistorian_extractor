@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::collections::HashMap;
 use teehistorian::chunks::{
-    ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
+    chunk, ConsoleCommand, Drop, InputDiff, InputNew, NetMessage, PlayerDiff, PlayerNew, PlayerOld,
 };
 use teehistorian::Chunk;
 use twgame_core::net_msg::{self, Team};
@@ -199,6 +199,29 @@ impl Parser {
             Chunk::Drop(drop) => self.handle_drop(drop),
             Chunk::PlayerReady(rdy) => debug!("T={} {:?}", self.tick_index, rdy),
             Chunk::Join(join) => debug!("T={} {:?}", self.tick_index, join),
+            Chunk::PlayerName(name) => {
+                use std::collections::hash_map::Entry;
+                let new_player_name = String::from_utf8_lossy(name.name).to_string();
+
+                match self.player_names.entry(name.cid) {
+                    Entry::Vacant(e) => {
+                        e.insert(new_player_name.clone());
+                        debug!(
+                            "T={} set player name for cid={} to {}",
+                            self.tick_index, name.cid, new_player_name
+                        );
+                    }
+                    Entry::Occupied(e) => {
+                        if e.get() != &new_player_name {
+                            warn!(
+                                "T={} ignored rename for cid={} from {:?} to {}",
+                                self.tick_index, name.cid, e.get(), new_player_name
+                            );
+                        }
+                    }
+                }
+            }
+            // crash on these
             Chunk::PlayerSwap(_) => {
                 return Err(ParseError::UnhandledChunkError("Player Swap".to_string()))
             }
@@ -276,7 +299,10 @@ impl Parser {
                     .replace("(1)", "") // remove leading (1)
                     .trim()
                     .to_string();
-                debug!("StartInfo cid={} => name={}", net_msg.cid, cleaned_name);
+                debug!(
+                    "T={} StartInfo cid={} => name={}",
+                    self.chunk_index, net_msg.cid, cleaned_name
+                );
                 self.player_names.insert(net_msg.cid, cleaned_name);
             }
             net_msg::ClNetMessage::ClKill => {
