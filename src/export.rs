@@ -1,7 +1,9 @@
 use hdf5_metno::{self as hdf5, types::VarLenAscii};
 use log::info;
 use ndarray::{Array2, Array3};
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 use std::{
     fs::{create_dir_all, File, OpenOptions},
     io::Write,
@@ -364,12 +366,22 @@ impl Exporter {
         parser_config: &ParserConfig,
         export_config: &ExportConfig,
     ) {
-        // parse batch -> DDNetSequences
-        let mut sequence_batch = Vec::new();
-        for path in batch_paths {
-            let x = Extractor::get_ddnet_sequences(&path, &parser_config);
-            sequence_batch.extend(x);
-        }
+        let start_time = Instant::now();
+        let num_workers = rayon::current_num_threads();
+
+        // parse batch -> DDNetSequences (in parallel)
+        let parse_start = Instant::now();
+        let mut sequence_batch: Vec<_> = batch_paths
+            .par_iter()
+            .flat_map(|path| Extractor::get_ddnet_sequences(&path, &parser_config))
+            .collect();
+        let parse_elapsed = parse_start.elapsed();
+
+        info!(
+            "parallel parsing: {:.2}s ({} workers)",
+            parse_elapsed.as_secs_f64(),
+            num_workers
+        );
         info!("extracted {} ddnet sequences", sequence_batch.len());
 
         // Convert DDNetSequence -> Sequence
@@ -430,6 +442,17 @@ impl Exporter {
         log_sequence_info(&cleaned_sequences);
 
         self.add_to_dataset(&cleaned_sequences);
+
+        let elapsed = start_time.elapsed();
+        let wall_ms_per_file = elapsed.as_secs_f64() * 1000.0 / batch_paths.len() as f64;
+        let cpu_ms_per_file = parse_elapsed.as_secs_f64() * 1000.0 * num_workers as f64 / batch_paths.len() as f64;
+        info!(
+            "batch completed in {:.2}s ({} files)\n  wall-clock: {:.2}ms per file\n  cpu-time: {:.2}ms per file",
+            elapsed.as_secs_f64(),
+            batch_paths.len(),
+            wall_ms_per_file,
+            cpu_ms_per_file
+        );
     }
 
     pub fn print_alias_candidates(&self, k: usize, min_shared: usize, min_wj: f64, top_n: usize) {

@@ -157,7 +157,12 @@ impl Extractor {
             }
         };
 
-        let mut parser = Parser::new(config.clone());
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let mut parser = Parser::new(config.clone(), file_name);
         parser.parse_header(header_bytes);
         while let Ok(chunk) = th.next_chunk() {
             let parse_status = parser.parse_chunk(chunk);

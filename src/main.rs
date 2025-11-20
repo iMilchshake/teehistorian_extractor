@@ -1,6 +1,7 @@
 use clap::Parser;
 use log::info;
 use log::LevelFilter;
+use rayon::ThreadPoolBuilder;
 use std::fs;
 use std::path::PathBuf;
 use teehistorian_extractor::export::ExportConfig;
@@ -65,6 +66,10 @@ struct Cli {
     /// csv list of player names to include. All others will be filtered out.
     #[clap(short = 'f', long, value_delimiter = ',')]
     filter_players: Option<Vec<String>>,
+
+    /// number of worker threads for parallel processing (defaults to physical CPU cores)
+    #[clap(short = 'j', long)]
+    workers: Option<usize>,
 }
 
 fn batched_export(args: &Cli) {
@@ -117,6 +122,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(args.log_level)
         .target(env_logger::Target::Stdout)
         .init();
+
+    // Configure rayon thread pool
+    let num_workers = args.workers.unwrap_or_else(|| num_cpus::get_physical());
+    ThreadPoolBuilder::new()
+        .num_threads(num_workers)
+        .build_global()
+        .unwrap();
+    info!(
+        "using {} worker threads (physical cores: {})",
+        num_workers,
+        num_cpus::get_physical()
+    );
+
     batched_export(&args);
     info!("done");
     Ok(())

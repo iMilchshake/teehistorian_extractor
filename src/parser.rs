@@ -156,10 +156,13 @@ pub struct Parser {
     game_info: Option<GameInfo>,
 
     config: ParserConfig,
+
+    /// file context for logging (filename)
+    file_context: String,
 }
 
 impl Parser {
-    pub fn new(config: ParserConfig) -> Parser {
+    pub fn new(config: ParserConfig, file_context: String) -> Parser {
         Parser {
             finished: false,
             tick_index: 0,
@@ -172,6 +175,7 @@ impl Parser {
             player_names: HashMap::new(),
             game_info: None,
             config,
+            file_context,
         }
     }
 
@@ -214,7 +218,8 @@ impl Parser {
                     Entry::Occupied(e) => {
                         if e.get() != &new_player_name {
                             warn!(
-                                "T={} ignored rename for cid={} from {:?} to {}",
+                                "[{}] T={} ignored rename for cid={} from {:?} to {}",
+                                self.file_context,
                                 self.tick_index,
                                 name.cid,
                                 e.get(),
@@ -245,8 +250,8 @@ impl Parser {
             | Chunk::TeamSaveSuccess(_) => {}
             _ => {
                 warn!(
-                    "chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
-                    self.chunk_index, self.tick_index, chunk
+                    "[{}] chunk={}, tick={} -> Untracked Chunk Variant: {:?}",
+                    self.file_context, self.chunk_index, self.tick_index, chunk
                 );
             }
         }
@@ -336,8 +341,8 @@ impl Parser {
             },
             net_msg::ClNetMessage::ClCommand(cmd) => {
                 info!(
-                    "cid={} command={:?} {:?}",
-                    net_msg.cid, cmd.name, cmd.arguments
+                    "[{}] cid={} command={:?} {:?}",
+                    self.file_context, net_msg.cid, cmd.name, cmd.arguments
                 );
             }
             _ => {}
@@ -549,7 +554,7 @@ impl Parser {
                 if let Some(seq) = self.active_sequences.get_mut(&command.cid) {
                     seq.timeout_code = Some(timeout_code.to_owned());
                 } else {
-                    warn!("/timeout for unknown CID");
+                    warn!("[{}] /timeout for unknown CID", self.file_context);
                 }
             }
         }
